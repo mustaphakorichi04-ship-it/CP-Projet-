@@ -394,8 +394,15 @@ def add_security_headers(response):
     # ------------------------------------------------------------
     if IS_PRODUCTION:
         connect_src_extra = ""
+        frame_ancestors = "'none'"
     else:
         connect_src_extra = " http://localhost:5000 http://127.0.0.1:5000"
+        # Environnement de test uniquement : autorise l'affichage de
+        # l'application dans l'aperçu hébergé (iframe *.e2b.app) afin de
+        # pouvoir la visualiser et la tester dans le navigateur. En
+        # production, la CSP reste stricte : frame-ancestors 'none'.
+        preview_host = os.environ.get('CP_PREVIEW_ORIGIN', 'https://*.e2b.app')
+        frame_ancestors = "'self' " + preview_host
 
     csp = (
         "default-src 'self'; "
@@ -406,11 +413,14 @@ def add_security_headers(response):
         "img-src data: 'self' https://*.tile.openstreetmap.org; "
         "connect-src 'self'" + connect_src_extra +
         " https://*.tile.openstreetmap.org https://server.arcgisonline.com https://*.tile.opentopomap.org; "
-        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        "object-src 'none'; base-uri 'self'; frame-ancestors " + frame_ancestors + "; form-action 'self'"
     )
     response.headers['Content-Security-Policy'] = csp
     response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
+    # X-Frame-Options : DENY en production ; SAMEORIGIN en test (la
+    # restriction d'iframe de l'aperçu est portée par frame-ancestors,
+    # prioritaire sur X-Frame-Options dans les navigateurs modernes).
+    response.headers['X-Frame-Options'] = 'DENY' if IS_PRODUCTION else 'SAMEORIGIN'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = (
         'geolocation=(self), camera=(), microphone=(), payment=(), '

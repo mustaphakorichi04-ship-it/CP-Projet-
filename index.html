@@ -61,8 +61,13 @@
 <script src="vendor/xlsx/0.18.5/xlsx.full.min.js"
         integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"
         crossorigin="anonymous"></script>
+   <!-- SRI multi-provenance : la 1re empreinte est celle du fichier minifié
+        publié par le CDN (chart.umd.min.js), la 2de celle du paquet npm
+        officiel chart.js@4.4.0 (chart.umd.js). Le navigateur accepte le
+        fichier si AU MOINS une empreinte correspond : le SRI reste donc
+        actif quelle que soit la provenance du fichier vendorisé. -->
    <script src="vendor/chart.js/4.4.0/chart.umd.min.js"
-        integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
+        integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g sha384-FcQlsUOd0TJjROrBxhJdUhXTUgNJQxTMcxZe6nHbaEfFL1zjQ+bq/uRoBQxb0KMo"
         crossorigin="anonymous" defer></script>
 <script src="vendor/jspdf/2.5.1/jspdf.umd.min.js"
         integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk"
