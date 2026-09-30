@@ -65,9 +65,12 @@ Aucune API publique, aucun identifiant, aucune classe, aucun contrat existant n'
 | 15 | Module Équipements : données réelles après tous les rechargements différés (2 lignes GZS-*, 0 mélange) | ✅ |
 | 16 | Les 13 entrées de la sidebar Studio : module affiché, `#hash` correct, `?project=` conservé, aucun conteneur manquant | ✅ |
 | 17 | Historique : module affiché avec l'historique réel du projet (« Aucun historique disponible » si vide) | ✅ |
+| 19 | Barre latérale Dashboard — entrées « Abonnement & Factures PRO », « Grille Tarifaire », « Paramètres SaaS », « Statut Serveur & API », « Aide & Normes NACE » : clic → onglet affiché **et** adresse mise à jour (`#billing`, `#pricing`, `#settings`, `#status`, `#support`) puis réouverture de l'URL (F5) | ✅ |
+| 20 | « Checkout Test (Visa) » : modale ouverte, plan transmis (Plan Professionnel), carte de test pré-remplie (4242 4242 4242 4242) | ✅ |
+| 21 | Liens du Dashboard vers le Studio : 6/6 contextualisés `?project=<ID actif>` (5 modules + bouton « Ouvrir Studio ») ; cartes projets : chaque carte cible **son** projet (0 carte mal ciblée) ; 0 lien de la sidebar vers un autre projet | ✅ |
 | 18 | Aucune valeur de repli inventée dans le code : `GZ-Nord`, `Arzew`, `Hassi`, `In Salah` absents du runtime ; plus de défaut `3LPE` / `TR-002` / `22.42 Ω` / `300 W` / `100 %`. Seule occurrence restante de toponyme : fixture d'un test unitaire (`apps/api/test/compliance.spec.ts`), hors runtime | ✅ |
 
-Synthèse : **29/29** vérifications pour le Studio, **24/24** pour le Dashboard SaaS, **0 ❌**.
+Synthèse : **29/29** vérifications pour le Studio, **24/24** pour le Dashboard SaaS, **43/43** pour la barre latérale du Dashboard, **0 ❌**.
 
 ### 2.3 Reproduction des tests
 
@@ -81,6 +84,7 @@ cd tests/e2e && npm install jsdom@24 fake-indexeddb
 CP_DB_PATH=/chemin/cp_data.db python backend.py &
 node test-dashboard.e2e.mjs                    # 24/24
 node test-studio.e2e.mjs                       # 29/29
+node test-dashboard-sidebar.e2e.mjs            # 43/43 (barre latérale : Commercial & SaaS, Configuration, liens Studio)
 ```
 
 ### 2.4 Preuves de non-régression des résultats de calcul

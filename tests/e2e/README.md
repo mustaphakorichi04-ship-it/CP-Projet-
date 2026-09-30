@@ -1,6 +1,6 @@
 # Tests E2E — synchronisation, routage et continuité `projectId`
 
-Ces deux harnais valident le parcours réel **Dashboard SaaS ↔ Studio** contre une API Flask
+Ces trois harnais valident le parcours réel **Dashboard SaaS ↔ Studio** contre une API Flask
 et une base `cp_data.db` réels (aucune donnée simulée côté application).
 
 ## Pré-requis
@@ -21,8 +21,9 @@ la production).
 ## Exécution
 
 ```bash
-node test-dashboard.e2e.mjs   # Dashboard : 24 vérifications
-node test-studio.e2e.mjs      # Studio    : 29 vérifications
+node test-dashboard.e2e.mjs          # Dashboard        : 24 vérifications
+node test-studio.e2e.mjs             # Studio           : 29 vérifications
+node test-dashboard-sidebar.e2e.mjs  # Barre latérale   : 43 vérifications
 ```
 
 Le code de sortie vaut 0 si toutes les vérifications passent.
@@ -32,6 +33,12 @@ Le code de sortie vaut 0 si toutes les vérifications passent.
 - `test-dashboard.e2e.mjs` : deep-link `?project=PROJ-002#projects`, KPI calculés sur la base,
   absence de mélange entre projets, liens Studio contextualisés, bascule PROJ-003,
   indisponibilité de l'API → `N/A` (jamais de valeur inventée).
+- `test-dashboard-sidebar.e2e.mjs` : **toutes les entrées de la barre latérale du Dashboard** —
+  « Gestion des Projets », « Simulateurs Express », « Abonnement & Factures PRO », « Grille Tarifaire »,
+  « Checkout Test (Visa) » (modale + carte de test), « Paramètres SaaS », « Statut Serveur & API »,
+  « Aide & Normes NACE », les 5 liens de modules du Studio et le bouton « Ouvrir Studio » : présence,
+  clic → onglet affiché **et** URL mise à jour, réouverture de chaque URL directe (F5), contextualisation
+  `?project=<ID actif>`, cartes projets ciblant **leur** projet, aucun mélange inter-projets.
 - `test-studio.e2e.mjs` : deep-link `?project=..#<module>`, activation du module et du menu,
   état applicatif issu de la base (`iccp.current`), conservation du `projectId` lors des
   navigations de modules, bascule de projet, lien retour Dashboard contextualisé,
