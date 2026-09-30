@@ -15,6 +15,8 @@ const STATIC_ASSETS = [
   './controller.js',
   './cp-controller.js',
   './storage.js',
+  './storage-proxy.js',
+  './router.js',
   './manifest.json',
   './acCorrosionEngine.js',
   './cableLengthEngine.js',

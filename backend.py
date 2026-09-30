@@ -1590,12 +1590,30 @@ def get_dashboard_summary():
         total_rectifier_nominal_A = 0.0
         
         projects_summary = []
+        _project_compliance = []
         for p in projects:
             p_id = p['id']
             p_name = p['name']
             p_type = p['type']
             p_data = json.loads(p['data']) if p['data'] else {}
             
+            # Métadonnées réelles du projet (aucune valeur inventée en repli)
+            proj_meta_early = p_data.get('project', {}) if isinstance(p_data, dict) else {}
+            target_potential = proj_meta_early.get('targetPotential')
+            project_standard = proj_meta_early.get('standard')
+
+            # Conformité NACE calculée à partir des mesures terrain réellement
+            # enregistrées (table field_measurements). Aucune mesure → N/A.
+            meas_rows = conn.execute(
+                'SELECT compliant FROM field_measurements WHERE project_id = ?', (p_id,)
+            ).fetchall()
+            meas_total = len(meas_rows)
+            meas_ok = sum(1 for m in meas_rows if m['compliant'] == 1)
+            compliance_pct = round(100.0 * meas_ok / meas_total, 1) if meas_total > 0 else None
+            project_status = None
+            if compliance_pct is not None:
+                project_status = 'Conforme (mesures)' if compliance_pct >= 100.0 else 'Non conforme (mesures)'
+
             eq_rows = conn.execute('SELECT * FROM equipments WHERE project_id = ?', (p_id,)).fetchall()
             p_pipe_len = 0.0
             p_pipe_surf = 0.0
@@ -1625,9 +1643,9 @@ def get_dashboard_summary():
                         'length_km': round(length_m / 1000.0, 2),
                         'diameter_mm': round(diam_m * 1000.0, 1) if diam_m else None,
                         'surface_m2': round(surf, 2),
-                        'coating': eq_data.get('coatingType', '3LPE'),
-                        'condition': eq_data.get('coatingCondition', 'neuf'),
-                        'status': 'Protégé (-850 mV CSE)'
+                        'coating': eq_data.get('coatingType'),
+                        'condition': eq_data.get('coatingCondition'),
+                        'status': eq_data.get('status')
                     })
                 elif 'rectifier' in eq_type:
                     p_rect_count += 1
@@ -1639,11 +1657,11 @@ def get_dashboard_summary():
                         'tag': eq['tag'],
                         'projectId': p_id,
                         'projectName': p_name,
-                        'model': eq_data.get('model', 'TR-002'),
-                        'nominalCurrent': nom_i,
-                        'nominalVoltage': nom_v,
-                        'power': eq_data.get('power', 300),
-                        'status': 'Actif'
+                        'model': eq_data.get('model'),
+                        'nominalCurrent': nom_i or None,
+                        'nominalVoltage': nom_v or None,
+                        'power': eq_data.get('power'),
+                        'status': eq_data.get('status')
                     })
                 elif 'groundbed' in eq_type:
                     p_gb_count += 1
@@ -1653,10 +1671,10 @@ def get_dashboard_summary():
                         'tag': eq['tag'],
                         'projectId': p_id,
                         'projectName': p_name,
-                        'anodeCount': dims.get('anodeCount', 16),
-                        'totalDepth': dims.get('totalDepth', 200),
-                        'R_total': gb_res.get('R_total', 22.42),
-                        'lifeDesign': gb_res.get('lifeDesign', 25)
+                        'anodeCount': dims.get('anodeCount'),
+                        'totalDepth': dims.get('totalDepth'),
+                        'R_total': gb_res.get('R_total'),
+                        'lifeDesign': gb_res.get('lifeDesign')
                     })
             
             iccp_data = p_data.get('iccp', {})
@@ -1670,20 +1688,28 @@ def get_dashboard_summary():
                 'id': p_id,
                 'name': p_name,
                 'type': p_type,
-                'standard': proj_meta.get('standard', 'NACE SP0169'),
-                'targetPotential': proj_meta.get('targetPotential', -850),
+                'standard': project_standard,
+                'targetPotential': target_potential,
                 'pipelineLengthKm': round(p_pipe_len / 1000.0, 2),
                 'pipelineSurfaceM2': round(p_pipe_surf, 2),
                 'rectifiersCount': p_rect_count,
                 'groundbedsCount': p_gb_count,
                 'iccpCurrentA': round(calc_i, 3),
-                'status': 'Protégé (-850 mV CSE)',
+                'naceCompliancePercent': compliance_pct,
+                'measurementsCount': meas_total,
+                'status': project_status,
                 'updatedAt': p['updated_at']
             })
+            _project_compliance.append((meas_ok, meas_total))
         
         conn.close()
         
         total_km = round(total_pipeline_len_m / 1000.0, 2)
+
+        global_meas_total = sum(t for _, t in _project_compliance)
+        global_meas_ok = sum(o for o, _ in _project_compliance)
+        global_compliance = (round(100.0 * global_meas_ok / global_meas_total, 1)
+                             if global_meas_total > 0 else None)
         
         return jsonify({
             'engineer': {
@@ -1696,9 +1722,9 @@ def get_dashboard_summary():
                 'protectedNetworkKm': total_km,
                 'protectedNetworkKmFormatted': f"{total_km:.2f} km",
                 'totalSurfaceM2': round(total_pipeline_surf_m2, 2),
-                'naceCompliancePercent': 100.0,
-                'naceComplianceFormatted': "100%",
-                'naceCriteria': "-850 mV CSE (Critère d'immunité validé)",
+                'naceCompliancePercent': global_compliance,
+                'naceComplianceFormatted': (f"{global_compliance:g} %" if global_compliance is not None else None),
+                'naceCriteria': None,
                 'activeRectifiersCount': len(rectifiers_list),
                 'activeRectifiersFormatted': f"{len(rectifiers_list)} actif{'s' if len(rectifiers_list) > 1 else ''}",
                 'totalIccpCurrentA': round(total_iccp_current_A, 3),

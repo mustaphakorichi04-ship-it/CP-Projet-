@@ -89,26 +89,37 @@ const StorageManager = (function() {
     // ✅ CORRECTION v8.7 : écriture IndexedDB immédiate avec attente de la transaction
     //   pour éviter la race condition avec loadEquipmentsForProject.
     // ============================================================
+    function mirrorToLocalStorage(storeName, key, value) {
+        try {
+            if (storeName === 'history' || storeName === 'groundbedData' || storeName === 'interferenceData') {
+                // Ces stores contiennent un objet unique
+                setLS(storeName, value && value.data !== undefined ? value.data : value);
+            } else {
+                let all = getLS(storeName);
+                if (!Array.isArray(all)) all = [];
+                const idx = all.findIndex(item => item && item.id === key);
+                if (idx >= 0) all[idx] = value;
+                else all.push(value);
+                setLS(storeName, all);
+            }
+        } catch (e) {
+            console.warn('[Storage] Erreur forceSave localStorage:', e);
+        }
+    }
+
     async function forceSave(storeName, key, value) {
         if (useLocalStorage) {
-            try {
-                if (storeName === 'history' || storeName === 'groundbedData' || storeName === 'interferenceData') {
-                    // Ces stores contiennent un objet unique
-                    setLS(storeName, value && value.data !== undefined ? value.data : value);
-                } else {
-                    let all = getLS(storeName);
-                    if (!Array.isArray(all)) all = [];
-                    const idx = all.findIndex(item => item && item.id === key);
-                    if (idx >= 0) all[idx] = value;
-                    else all.push(value);
-                    setLS(storeName, all);
-                }
-            } catch (e) {
-                console.warn('[Storage] Erreur forceSave localStorage:', e);
-            }
+            mirrorToLocalStorage(storeName, key, value);
             return;
         }
-        if (!db) throw new Error('DB not initialized');
+        if (!db) {
+            // IndexedDB pas encore ouverte (démarrage / navigation directe) :
+            // on écrit le miroir localStorage au lieu de lever une exception.
+            // Sans cela, l'hydratation d'un projet (deep-link) échouait avec
+            // « DB not initialized » et le projet de l'URL était perdu.
+            mirrorToLocalStorage(storeName, key, value);
+            return;
+        }
 
         // ✅ Écriture DIRECTE dans IndexedDB avec attente de la transaction
         const tx = db.transaction(storeName, 'readwrite');
@@ -139,7 +150,19 @@ const StorageManager = (function() {
             }
             return;
         }
-        if (!db) throw new Error('DB not initialized');
+        if (!db) {
+            // Base pas encore ouverte : suppression du miroir localStorage.
+            try {
+                let all = getLS(storeName);
+                if (Array.isArray(all)) {
+                    all = all.filter(item => !item || item.id !== key);
+                    setLS(storeName, all);
+                }
+            } catch (e) {
+                console.warn('[Storage] Erreur forceDelete localStorage:', e);
+            }
+            return;
+        }
 
         // ✅ Suppression DIRECTE dans IndexedDB avec attente de la transaction
         const tx = db.transaction(storeName, 'readwrite');
@@ -469,6 +492,12 @@ const StorageManager = (function() {
     async function loadEquipmentsForProject(projectId, forceRefresh = false) {
         if (!projectId) return [];
 
+        // Lecture forcée : le cache mémoire ne doit jamais être écrasé par
+        // une liste vide provenant d'un stockage local qui n'a pas encore
+        // reçu les équipements hydratés depuis la base (le tableau
+        // « Équipements » se vidait alors pour un projet pourtant peuplé).
+        const cachedBefore = _memoryCache.equipments.get(projectId) || null;
+
         if (!forceRefresh && _equipmentCacheLRU.has(projectId)) {
             const cached = _equipmentCacheLRU.get(projectId);
             _equipmentCacheLRU.delete(projectId);
@@ -501,6 +530,10 @@ const StorageManager = (function() {
                 }
 
                 eqs = eqs.map(eq => normalizeEquipment(eq));
+                if (forceRefresh && eqs.length === 0 && cachedBefore && cachedBefore.length > 0) {
+                    console.warn('[Storage] Lecture forcée vide — cache mémoire conservé pour', projectId);
+                    return cachedBefore;
+                }
                 _memoryCache.equipments.set(projectId, eqs);
                 if (_equipmentCacheLRU.size >= MAX_CACHED_PROJECTS) {
                     const firstKey = _equipmentCacheLRU.keys().next().value;
@@ -516,6 +549,10 @@ const StorageManager = (function() {
         try {
             const all = getLS('equipments') || [];
             const eqs = all.filter(e => e.projectId === projectId).map(normalizeEquipment);
+            if (forceRefresh && eqs.length === 0 && cachedBefore && cachedBefore.length > 0) {
+                console.warn('[Storage] Lecture forcée vide — cache mémoire conservé pour', projectId);
+                return cachedBefore;
+            }
             _memoryCache.equipments.set(projectId, eqs);
             if (_equipmentCacheLRU.size >= MAX_CACHED_PROJECTS) {
                 const firstKey = _equipmentCacheLRU.keys().next().value;

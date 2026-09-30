@@ -793,13 +793,11 @@
         </div>
       </div>
 
-      <!-- Workspace switcher -->
+      <!-- Workspace switcher — alimenté par les projets réels de la base -->
       <div class="workspace-switcher">
         <label class="workspace-label">Espace de travail actif</label>
         <select class="workspace-select" id="workspaceSelect" onchange="switchWorkspace(this.value)">
-          <option value="Projet EMK">Projet EMK &bull; ICCP Actif</option>
-          <option value="gazoducs">Gazoducs Europe &bull; Prod</option>
-          <option value="offshore">Lignes Offshore TotalEnergies</option>
+          <option value="">Chargement des projets…</option>
           <option value="sandbox_lab">+ Créer nouvel espace...</option>
         </select>
       </div>
@@ -827,22 +825,33 @@
           <span>Simulateurs Express</span>
         </button>
 
-        <!-- Direct functional links to Studio Modules with Return Path -->
-        <a href="/studio#equipements" class="nav-btn" title="Accéder au module des équipements et canalisations">
+        <!-- Liens directs vers les modules réels du Studio.
+             Le href est réécrit dynamiquement par syncStudioLinks() avec
+             l'ID du projet actif : /studio?project=<ID>#<module> -->
+        <a href="/studio#equipements" class="nav-btn" id="navStudioEquipements"
+           data-studio-module="equipements" title="Accéder au module des équipements et canalisations">
           <span class="nav-icon">🔧</span>
           <span>Équipements & Réseau</span>
         </a>
-        <a href="/studio#iccp" class="nav-btn" title="Accéder au dimensionnement ICCP et soutirage de courant">
+        <a href="/studio#iccp" class="nav-btn" id="navStudioIccp"
+           data-studio-module="iccp" title="Accéder au dimensionnement ICCP et soutirage de courant">
           <span class="nav-icon">⚡</span>
           <span>Système ICCP & Postes</span>
         </a>
-        <a href="/studio#corrosivite" class="nav-btn" title="Accéder à l'étude de corrosivité et résistivité du sol">
+        <a href="/studio#corrosivite" class="nav-btn" id="navStudioCorrosivite"
+           data-studio-module="corrosivite" title="Accéder à l'étude de corrosivité et résistivité du sol">
           <span class="nav-icon">🧪</span>
           <span>Étude Corrosivité</span>
         </a>
-        <a href="/studio#cartography" class="nav-btn" title="Accéder à la cartographie SIG et visualisation 3D">
+        <a href="/studio#cartography" class="nav-btn" id="navStudioCartography"
+           data-studio-module="cartography" title="Accéder à la cartographie SIG et visualisation 3D">
           <span class="nav-icon">🗺️</span>
           <span>Cartographie SIG / 3D</span>
+        </a>
+        <a href="/studio#groundbed" class="nav-btn" id="navStudioGroundbed"
+           data-studio-module="groundbed" title="Accéder au dimensionnement du déversoir (Groundbed)">
+          <span class="nav-icon">💧</span>
+          <span>Groundbed (Déversoir)</span>
         </a>
 
         <div class="nav-category">Commercial & SaaS</div>
@@ -875,12 +884,12 @@
         </button>
       </nav>
 
-      <!-- User footer -->
+      <!-- User footer (renseigné depuis /api/dashboard/summary) -->
       <div class="sidebar-user">
-        <div class="user-avatar-circle" id="sidebarAvatar">MK</div>
+        <div class="user-avatar-circle" id="sidebarAvatar">—</div>
         <div class="user-text">
-          <div class="user-fullname" id="sidebarUserName">Ing. Mustapha Korichi</div>
-          <div class="user-subline">
+          <div class="user-fullname" id="sidebarUserName">—</div>
+          <div class="user-subline" id="sidebarUserRole">
             <span style="color: #34d399;">●</span> NACE Level 4 CP Expert
           </div>
         </div>
@@ -916,21 +925,11 @@
                 <span>Notifications (Sandbox)</span>
                 <a href="#" onclick="markAllNotifsRead(event)" style="color: #60a5fa; font-size: 0.75rem; text-decoration: none;">Tout marquer lu</a>
               </div>
-              <div class="notif-list">
-                <div class="notif-item unread">
-                  <div class="notif-title">⚡ Projet EMK synchronisé en temps réel</div>
-                  <div>Réseau de 12.78 km protégé par TR-OPTIMAL (0.197 A sous 6.42 V).</div>
-                  <div class="notif-time">Il y a 5 min</div>
-                </div>
-                <div class="notif-item unread">
-                  <div class="notif-title">🛡️ Critère NACE SP0169 Validé à 100%</div>
-                  <div>Potentiel minimal : -850 mV CSE respecté sur EMK-42 et EMN-11.</div>
-                  <div class="notif-time">Il y a 30 min</div>
-                </div>
+              <div class="notif-list" id="notifList">
                 <div class="notif-item">
-                  <div class="notif-title">📄 Facture de test simulée #INV-2026-0042</div>
-                  <div>Client : Ing. Mustapha Korichi &bull; 199.00 € TTC (Sandbox).</div>
-                  <div class="notif-time">Aujourd'hui</div>
+                  <div class="notif-title">⏳ Chargement des données de la base…</div>
+                  <div>Les notifications sont générées à partir des projets réels.</div>
+                  <div class="notif-time">—</div>
                 </div>
               </div>
             </div>
@@ -953,11 +952,11 @@
           <!-- Welcome Hero -->
           <div class="welcome-hero">
             <div class="welcome-text">
-              <h2>Supervision Opérationnelle &bull; <span id="heroProjectTitle">Projet EMK</span></h2>
+              <h2>Supervision Opérationnelle &bull; <span id="heroProjectTitle">—</span></h2>
               <p>
                 Plateforme de protection cathodique certifiée <strong>NACE SP0169</strong> et <strong>ISO 15589-1</strong>.
                 Connectée en temps réel au moteur d'ingénierie et à la base de données industrielle.
-                Responsable technique : <strong>Ing. Mustapha Korichi</strong>.
+                Responsable technique : <strong id="heroEngineerName">—</strong>.
               </p>
             </div>
             <div class="hero-actions">
@@ -977,9 +976,9 @@
                 <span class="kpi-label">Réseau Protégé</span>
                 <span class="kpi-icon">📏</span>
               </div>
-              <div class="kpi-value" id="kpiNetworkKm">12.78 <small style="font-size: 1rem; color: var(--saas-muted);">km</small></div>
+              <div class="kpi-value" id="kpiNetworkKm">N/A</div>
               <div class="kpi-trend trend-up">
-                <span>✓</span> <span id="kpiNetworkDetail">EMK-42 (8.78 km) + EMN-11 (4.00 km)</span>
+                <span>✓</span> <span id="kpiNetworkDetail">Chargement…</span>
               </div>
             </div>
 
@@ -988,8 +987,8 @@
                 <span class="kpi-label">Conformité NACE (-850mV)</span>
                 <span class="kpi-icon">🛡️</span>
               </div>
-              <div class="kpi-value" style="color: #34d399;" id="kpiNacePercent">100%</div>
-              <div class="kpi-trend trend-up">✓ -850 mV CSE (Critère d'immunité validé)</div>
+              <div class="kpi-value" style="color: #34d399;" id="kpiNacePercent">N/A</div>
+              <div class="kpi-trend trend-up" id="kpiNaceCriteria">—</div>
             </div>
 
             <div class="kpi-box">
@@ -997,8 +996,8 @@
                 <span class="kpi-label">Postes de Soutirage</span>
                 <span class="kpi-icon">⚡</span>
               </div>
-              <div class="kpi-value" id="kpiRectifiersCount">1 <small style="font-size: 1rem; color: var(--saas-muted);">actif</small></div>
-              <div class="kpi-trend trend-neutral" id="kpiCurrentDemand">Courant débité : 0.197 A (TR-OPTIMAL)</div>
+              <div class="kpi-value" id="kpiRectifiersCount">N/A</div>
+              <div class="kpi-trend trend-neutral" id="kpiCurrentDemand">—</div>
             </div>
 
             <div class="kpi-box">
@@ -1006,8 +1005,8 @@
                 <span class="kpi-label">Consommation Quota SaaS</span>
                 <span class="kpi-icon">📊</span>
               </div>
-              <div class="kpi-value" id="kpiQuotaUsage">1 / 10 <small style="font-size: 0.9rem; color: var(--saas-muted);">projets</small></div>
-              <div class="kpi-trend trend-up">Plan Professionnel (Sandbox)</div>
+              <div class="kpi-value" id="kpiQuotaUsage">N/A</div>
+              <div class="kpi-trend trend-up" id="kpiQuotaDetail">Base de données CP Engineer Pro</div>
             </div>
           </div>
 
@@ -1016,8 +1015,8 @@
             <!-- Real Projects / Pipelines Table -->
             <div class="card-block">
               <div class="card-block-header">
-                <span class="card-block-title">Ouvrages & Canalisations du Projet Actif (Projet EMK)</span>
-                <a href="/studio" class="btn-action-icon primary">Ouvrir dans le Studio &rarr;</a>
+                <span class="card-block-title">Ouvrages & Canalisations — <span id="overviewScope">—</span></span>
+                <a href="/studio" id="overviewStudioLink" class="btn-action-icon primary">Ouvrir dans le Studio &rarr;</a>
               </div>
               <div style="overflow-x: auto;">
                 <table class="saas-table" id="projectsTableOverview">
@@ -1032,56 +1031,9 @@
                     </tr>
                   </thead>
                   <tbody id="overviewPipelinesTbody">
-                    <tr>
-                      <td>
-                        <strong>EMK-42</strong><br>
-                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Pipeline enterré acier 3LPE</span>
-                      </td>
-                      <td>254 mm (DN250)</td>
-                      <td>8 776.4 m (8.78 km)</td>
-                      <td>7 003.26 m²</td>
-                      <td><span class="tag-status tag-green">-850 mV CSE (Protégé)</span></td>
-                      <td>
-                        <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>
-                        <strong>EMN-11</strong><br>
-                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Pipeline enterré acier 3LPE</span>
-                      </td>
-                      <td>254 mm (DN250)</td>
-                      <td>4 000.0 m (4.00 km)</td>
-                      <td>3 191.86 m²</td>
-                      <td><span class="tag-status tag-green">-850 mV CSE (Protégé)</span></td>
-                      <td>
-                        <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>
-                        <strong>Reservoir-1</strong><br>
-                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Réservoir à toit</span>
-                      </td>
-                      <td>Ø 20.0 m</td>
-                      <td>—</td>
-                      <td>314.16 m²</td>
-                      <td><span class="tag-status tag-green">Inclus au calcul</span></td>
-                      <td>
-                        <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>
-                        <strong>TR-OPTIMAL (TR-002)</strong><br>
-                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Poste de soutirage (Rectifier)</span>
-                      </td>
-                      <td>Calibre 15A / 20V</td>
-                      <td>Puissance 300 W</td>
-                      <td>P = 0.87 W</td>
-                      <td><span class="tag-status tag-green">Débit : 0.197 A</span></td>
-                      <td>
-                        <a href="/studio#iccp" class="btn-action-icon primary" title="Voir dans le module ICCP">Voir ICCP &rarr;</a>
+                    <tr id="overviewPipelinesPlaceholder">
+                      <td colspan="6" style="text-align: center; color: var(--saas-muted); padding: 1.5rem;">
+                        Chargement des ouvrages réels depuis la base de données…
                       </td>
                     </tr>
                   </tbody>
@@ -1097,29 +1049,29 @@
               </div>
               <div class="card-block-body">
                 <p style="font-size: 0.82rem; color: var(--saas-muted); margin-bottom: 1rem;">
-                  Pré-rempli avec les dimensions réelles cumulées de <strong>Projet EMK</strong>.
+                  Pré-rempli avec les dimensions réelles cumulées de <strong id="quickScope">—</strong>.
                 </p>
                 <div class="calc-input-group">
                   <label class="calc-input-label">Longueur totale des tronçons (km)</label>
-                  <input type="number" id="quickL" class="calc-text-input" value="12.78" step="0.01" oninput="runOverviewCalc()">
+                  <input type="number" id="quickL" class="calc-text-input" value="" placeholder="N/A" step="0.01" oninput="runOverviewCalc()">
                 </div>
                 <div class="calc-input-group">
                   <label class="calc-input-label">Diamètre extérieur moyen (mm)</label>
-                  <input type="number" id="quickD" class="calc-text-input" value="254" oninput="runOverviewCalc()">
+                  <input type="number" id="quickD" class="calc-text-input" value="" placeholder="N/A" oninput="runOverviewCalc()">
                 </div>
                 <div class="calc-input-group">
                   <label class="calc-input-label">Densité de courant requise J (mA/m²)</label>
-                  <input type="number" id="quickJ" class="calc-text-input" value="1.5" step="0.1" oninput="runOverviewCalc()">
+                  <input type="number" id="quickJ" class="calc-text-input" value="" placeholder="N/A" step="0.1" oninput="runOverviewCalc()">
                 </div>
 
                 <div class="calc-result-box">
                   <div class="calc-res-label">Courant Total Requis Estimé</div>
-                  <div class="calc-res-val" id="quickIResult">0.15 A</div>
-                  <div class="calc-res-sub">Surface calculée : <span id="quickSurface">10 195</span> m² &bull; Optimal DB : <strong>0.197 A</strong></div>
+                  <div class="calc-res-val" id="quickIResult">N/A</div>
+                  <div class="calc-res-sub">Surface calculée : <span id="quickSurface">N/A</span> m² &bull; Optimal DB : <strong id="quickOptimalDb">N/A</strong></div>
                 </div>
 
                 <div style="margin-top: 1.5rem; text-align: center;">
-                  <a href="/studio#iccp" class="btn-action-icon primary" style="width: 100%; justify-content: center; padding: 10px; font-weight: 600;">
+                  <a href="/studio#iccp" id="quickStudioLink" data-studio-module="iccp" class="btn-action-icon primary" style="width: 100%; justify-content: center; padding: 10px; font-weight: 600;">
                     Ouvrir l'Étude ICCP Complète dans le Studio &rarr;
                   </a>
                 </div>
@@ -1168,20 +1120,9 @@
                     </tr>
                   </thead>
                   <tbody id="allProjectsTbody">
-                    <tr>
-                      <td>
-                        <strong>PROJ-001 &bull; Projet EMK</strong><br>
-                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Canalisations EMK-42 + EMN-11</span>
-                      </td>
-                      <td><span style="font-family: monospace; text-transform: uppercase;">iccp</span></td>
-                      <td>NACE SP0169</td>
-                      <td>12.78 km (10 195 m²)</td>
-                      <td>1 poste (TR-002)</td>
-                      <td>0.197 A (6.42 V)</td>
-                      <td><span class="tag-status tag-green">Protégé (-850 mV)</span></td>
-                      <td>
-                        <a href="/studio" class="btn-action-icon primary">Ouvrir Studio</a>
-                        <button class="btn-action-icon" onclick="downloadSimulatedInvoice('PROJ-EMK-AUDIT', '0.00')">Rapport</button>
+                    <tr id="allProjectsPlaceholder">
+                      <td colspan="8" style="text-align: center; color: var(--saas-muted); padding: 1.5rem;">
+                        Chargement des projets réels (cp_data.db)…
                       </td>
                     </tr>
                   </tbody>
@@ -1216,8 +1157,8 @@
 
                 <div class="calc-result-box">
                   <div class="calc-res-label">Résistivité Apparente du Sol Calculée</div>
-                  <div class="calc-res-val" id="wennerResult">100.00 Ω·m</div>
-                  <div class="calc-res-sub" id="wennerCorrosivityTag" style="color: #34d399; font-weight: 600;">Faiblement corrosif (> 50 Ω·m) &bull; Conforme Projet EMK</div>
+                  <div class="calc-res-val" id="wennerResult">— Ω·m</div>
+                  <div class="calc-res-sub" id="wennerCorrosivityTag" style="color: #34d399; font-weight: 600;">En attente de saisie</div>
                 </div>
               </div>
             </div>
@@ -1246,8 +1187,8 @@
 
                 <div class="calc-result-box">
                   <div class="calc-res-label">Résistance Pure de Terre Dwight</div>
-                  <div class="calc-res-val" id="dwightResult">3.61 Ω</div>
-                  <div class="calc-res-sub">Avec câble et structures : <strong>22.42 Ω</strong> (Calcul Projet EMK)</div>
+                  <div class="calc-res-val" id="dwightResult">— Ω</div>
+                  <div class="calc-res-sub">Résistance pure de terre (formule de Dwight, hors câble et structures)</div>
                 </div>
               </div>
             </div>
@@ -1511,11 +1452,11 @@
                 </div>
                 <div style="background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 10px; border: 1px solid var(--saas-border);">
                   <div style="font-size: 0.75rem; color: var(--saas-dim);">DISPONIBILITÉ (UPTIME)</div>
-                  <div style="font-size: 1.5rem; font-weight: 800; font-family: monospace; color: #34d399;">99.98%</div>
+                  <div style="font-size: 1.5rem; font-weight: 800; font-family: monospace; color: #34d399;" id="liveStatusUptime">—</div>
                 </div>
                 <div style="background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 10px; border: 1px solid var(--saas-border);">
                   <div style="font-size: 0.75rem; color: var(--saas-dim);">VERSION ACTIVE</div>
-                  <div style="font-size: 1.5rem; font-weight: 800; font-family: monospace;">v9.7.0</div>
+                  <div style="font-size: 1.5rem; font-weight: 800; font-family: monospace;" id="liveStatusVersion">—</div>
                 </div>
               </div>
 
@@ -1526,11 +1467,15 @@
                 </div>
                 <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px;">
                   <span>Moteur de Calcul Uhlig / Dwyer (engine.js)</span>
-                  <span style="color: #34d399; font-weight: 600;">● Opérationnel (0.197 A calculé)</span>
+                  <span style="color: #34d399; font-weight: 600;" id="statusEngine">
+                    <span style="color: #94a3b8;">● Vérification…</span>
+                  </span>
                 </div>
                 <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px;">
                   <span>Base de Données SQLite (cp_data.db)</span>
-                  <span style="color: #34d399; font-weight: 600;">● Connectée (Projet EMK chargé)</span>
+                  <span style="color: #34d399; font-weight: 600;" id="statusDatabase">
+                    <span style="color: #94a3b8;">● Vérification…</span>
+                  </span>
                 </div>
               </div>
             </div>
@@ -1723,7 +1668,9 @@
       plan: localStorage.getItem('cp_plan') || 'pro',
       planName: localStorage.getItem('cp_plan_name') || 'Plan Professionnel',
       pricingIsAnnual: true,
-      data: null
+      data: null,
+      // Projet réellement sélectionné (source de vérité : /api/dashboard/summary)
+      activeProjectId: null
     };
 
     // Navigation & Tabs
@@ -1745,7 +1692,7 @@
         target.classList.add('active');
         // Scroll content to top
         const wrapper = document.querySelector('.main-wrapper');
-        if (wrapper) wrapper.scrollTo({ top: 0, behavior: 'smooth' });
+        if (wrapper && typeof wrapper.scrollTo === 'function') wrapper.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
         console.warn('[Dashboard] Tab not found:', tabId);
         return;
@@ -1783,6 +1730,9 @@
       if (tabId === 'tab-status') checkLiveServerHealth();
 
       document.getElementById('mainSidebar').classList.remove('open');
+
+      // Deep-link : l'onglet actif est reflété dans l'URL
+      if (!window.__cpApplyingUrl) updateDashboardUrl();
     }
 
     function toggleMobileSidebar() {
@@ -1801,110 +1751,446 @@
       showToast('Toutes les notifications sont marquées comme lues.', 'info');
     }
 
-    // Real-Time Data Fetcher
+    // ============================================================
+    // CONTEXTE PROJET + DONNÉES RÉELLES (source de vérité unique)
+    //   - Source : GET /api/dashboard/summary (base cp_data.db)
+    //   - Aucune donnée inventée : si une valeur n'existe pas → N/A
+    //   - URL canonique : /dashboard?project=<ID>#<onglet>
+    // ============================================================
+    const TAB_HASHES = {
+      'tab-overview': 'overview',
+      'tab-projects': 'projects',
+      'tab-calculators': 'calculators',
+      'tab-billing': 'billing',
+      'tab-pricing': 'pricing',
+      'tab-settings': 'settings',
+      'tab-status': 'status',
+      'tab-support': 'support'
+    };
+    const HASH_TO_TAB = {};
+    Object.keys(TAB_HASHES).forEach(tab => { HASH_TO_TAB[TAB_HASHES[tab]] = tab; });
+
+    const NA = 'N/A';
+
+    function esc(value) {
+      return String(value === null || value === undefined ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function fmtNumber(value, decimals) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return NA;
+      return n.toLocaleString('fr-FR', {
+        minimumFractionDigits: decimals === undefined ? 2 : decimals,
+        maximumFractionDigits: decimals === undefined ? 2 : decimals
+      });
+    }
+
+    function getProjectList() {
+      return (state.data && Array.isArray(state.data.projects)) ? state.data.projects : [];
+    }
+    function getProject(projectId) {
+      return getProjectList().find(p => p.id === projectId) || null;
+    }
+    function getProjectPipelines(projectId) {
+      const all = (state.data && Array.isArray(state.data.pipelines)) ? state.data.pipelines : [];
+      return all.filter(p => p.projectId === projectId);
+    }
+    function getProjectRectifiers(projectId) {
+      const all = (state.data && Array.isArray(state.data.rectifiers)) ? state.data.rectifiers : [];
+      return all.filter(r => r.projectId === projectId);
+    }
+
+    function studioUrl(projectId, moduleId, extraParams) {
+      const params = new URLSearchParams();
+      if (projectId) params.set('project', projectId);
+      if (extraParams) {
+        Object.keys(extraParams).forEach(k => { if (extraParams[k]) params.set(k, extraParams[k]); });
+      }
+      const query = params.toString();
+      return '/studio' + (query ? '?' + query : '') + (moduleId ? '#' + moduleId : '');
+    }
+
+    function getTabIdFromUrl() {
+      try {
+        const hash = window.location.hash.replace('#', '');
+        return HASH_TO_TAB[hash] || null;
+      } catch (e) { return null; }
+    }
+
+    function getProjectIdFromUrl() {
+      try {
+        const id = new URLSearchParams(window.location.search).get('project');
+        return (id && /^[A-Za-z0-9\-_]{1,64}$/.test(id)) ? id : null;
+      } catch (e) { return null; }
+    }
+
+    function updateDashboardUrl(options) {
+      const replace = !!(options && options.replace);
+      const params = new URLSearchParams(window.location.search);
+      if (state.activeProjectId) params.set('project', state.activeProjectId);
+      else params.delete('project');
+      const query = params.toString();
+      const hash = TAB_HASHES[state.currentTab] ? '#' + TAB_HASHES[state.currentTab] : '';
+      const url = window.location.pathname + (query ? '?' + query : '') + hash;
+      const current = window.location.pathname + window.location.search + window.location.hash;
+      if (url === current) return;
+      try {
+        if (replace) window.history.replaceState({ tab: state.currentTab }, '', url);
+        else window.history.pushState({ tab: state.currentTab }, '', url);
+      } catch (e) { /* historique indisponible */ }
+    }
+
+    // ── Sélection du projet actif (aucun mélange entre projets) ──
+    function selectProject(projectId) {
+      if (!projectId) return false;
+      const project = getProject(projectId);
+      if (!project) {
+        showToast('Projet introuvable dans la base : ' + projectId, 'warning');
+        return false;
+      }
+      state.activeProjectId = projectId;
+      try { sessionStorage.setItem('cp_active_project', projectId); } catch (e) {}
+      renderWorkspaceSelector();
+      renderKpis();
+      renderPipelinesTable();
+      renderProjectsTable();
+      renderNotifications();
+      syncStudioLinks();
+      updateDashboardUrl();
+      return true;
+    }
+
+    // ── Rendu : espace de travail (projets réels) ──
+    function renderWorkspaceSelector() {
+      const select = document.getElementById('workspaceSelect');
+      if (!select) return;
+      const projects = getProjectList();
+      select.innerHTML = '';
+      if (projects.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'Aucun projet en base';
+        select.appendChild(opt);
+      }
+      projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.id + ' • ' + (p.name || p.id) + ' (' + (p.type || '—') + ')';
+        select.appendChild(opt);
+      });
+      const createOpt = document.createElement('option');
+      createOpt.value = 'sandbox_lab';
+      createOpt.textContent = '+ Créer un nouveau projet...';
+      select.appendChild(createOpt);
+
+      select.value = state.activeProjectId && projects.some(p => p.id === state.activeProjectId)
+        ? state.activeProjectId
+        : (projects[0] ? projects[0].id : '');
+    }
+
+    // ── Rendu : KPIs du projet actif ──
+    function renderKpis() {
+      const kpis = (state.data && state.data.kpis) || null;
+      const project = getProject(state.activeProjectId);
+      const pipelines = project ? getProjectPipelines(project.id) : [];
+      const rectifiers = project ? getProjectRectifiers(project.id) : [];
+
+      const setText = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.innerText = value;
+      };
+      const setHtml = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = value;
+      };
+
+      setText('heroProjectTitle', project ? (project.name || project.id) : NA);
+      setText('overviewScope', project ? (project.id + ' • ' + (project.name || project.id)) : NA);
+      setText('quickScope', project ? (project.name || project.id) : NA);
+
+      // Réseau protégé
+      const networkKm = project ? Number(project.pipelineLengthKm)
+        : (pipelines.reduce((acc, p) => acc + (Number(p.length_m) || 0), 0) / 1000);
+      setHtml('kpiNetworkKm', Number.isFinite(networkKm)
+        ? fmtNumber(networkKm, 2) + ' <small style="font-size: 1rem; color: var(--saas-muted);">km</small>'
+        : NA);
+      const detail = pipelines.length > 0
+        ? pipelines.map(p => p.tag + ' (' + fmtNumber(p.length_km, 2) + ' km)').join(' + ')
+        : (project ? 'Aucune canalisation enregistrée pour ce projet' : 'Chargement…');
+      setText('kpiNetworkDetail', detail);
+
+      // Conformité NACE : calculée sur les mesures terrain réelles de la base.
+      // Aucune mesure → N/A (jamais de pourcentage inventé).
+      let complianceText = NA;
+      if (project && project.naceCompliancePercent !== undefined && project.naceCompliancePercent !== null) {
+        complianceText = fmtNumber(project.naceCompliancePercent, 0) + ' %';
+        if (project.measurementsCount) {
+          complianceText += ' (' + project.measurementsCount + ' mesure' + (project.measurementsCount > 1 ? 's' : '') + ')';
+        }
+      } else if (project && project.status) {
+        complianceText = project.status;
+      }
+      setText('kpiNacePercent', complianceText);
+      setText('kpiNaceCriteria', project && project.targetPotential !== undefined && project.targetPotential !== null
+        ? (project.targetPotential + ' mV CSE (critère cible enregistré)')
+        : 'Aucune mesure de conformité en base');
+
+      // Postes de soutirage
+      const rectCount = project ? rectifiers.length : ((state.data && state.data.rectifiers) || []).length;
+      setHtml('kpiRectifiersCount', Number.isFinite(rectCount)
+        ? rectCount + ' <small style="font-size: 1rem; color: var(--saas-muted);">actif' + (rectCount > 1 ? 's' : '') + '</small>'
+        : NA);
+      const rectTag = rectifiers.length > 0 ? rectifiers[0].tag : null;
+      const currentA = project ? Number(project.iccpCurrentA) : (kpis ? Number(kpis.totalIccpCurrentA) : NaN);
+      setText('kpiCurrentDemand', Number.isFinite(currentA)
+        ? ('Courant débité : ' + fmtNumber(currentA, 3) + ' A' + (rectTag ? ' (' + rectTag + ')' : ''))
+        : 'Courant non calculé');
+
+      // Quota / base
+      const totalProjects = kpis ? kpis.activeProjectsCount : getProjectList().length;
+      setHtml('kpiQuotaUsage', Number.isFinite(Number(totalProjects))
+        ? totalProjects + ' <small style="font-size: 0.9rem; color: var(--saas-muted);">projets en base</small>'
+        : NA);
+      setText('kpiQuotaDetail', kpis ? ('Plan ' + String(state.plan).toUpperCase() + ' • base cp_data.db') : 'Base indisponible');
+
+      // Estimateur ICCP express : pré-remplissage réel (aucune valeur inventée)
+      const quickL = document.getElementById('quickL');
+      const quickD = document.getElementById('quickD');
+      const quickJ = document.getElementById('quickJ');
+      if (!project || pipelines.length === 0) {
+        if (quickL) quickL.value = '';
+        if (quickD) quickD.value = '';
+        setText('quickSurface', NA);
+        setText('quickIResult', NA);
+      } else {
+        if (quickL) quickL.value = String(networkKm.toFixed ? networkKm.toFixed(2) : networkKm);
+        const diameters = pipelines.map(p => Number(p.diameter_mm)).filter(n => Number.isFinite(n) && n > 0);
+        if (quickD && diameters.length > 0) {
+          quickD.value = String(Math.round(diameters.reduce((a, b) => a + b, 0) / diameters.length));
+        }
+        if (quickJ && !quickJ.value) quickJ.value = '1.5';
+        if (quickL && quickD && quickJ) runOverviewCalc();
+      }
+      setText('quickOptimalDb', rectifiers.length > 0 && Number.isFinite(currentA) ? fmtNumber(currentA, 3) + ' A' : NA);
+    }
+
+    // ── Rendu : ouvrages / canalisations réelles du projet actif ──
+    function renderPipelinesTable() {
+      const tbody = document.getElementById('overviewPipelinesTbody');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+
+      const project = getProject(state.activeProjectId);
+      if (!project) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--saas-muted); padding:1.5rem;">Aucun projet actif — sélectionnez un projet.</td></tr>';
+        return;
+      }
+
+      const pipelines = getProjectPipelines(project.id);
+      const rectifiers = getProjectRectifiers(project.id);
+
+      if (pipelines.length === 0 && rectifiers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--saas-muted); padding:1.5rem;">Aucun ouvrage enregistré pour ce projet (N/A).</td></tr>';
+        return;
+      }
+
+      pipelines.forEach(pipe => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>
+            <strong>${esc(pipe.tag)}</strong><br>
+            <span style="font-size: 0.75rem; color: var(--saas-dim);">${esc(pipe.projectName)} &bull; ${esc(pipe.coating || NA)} ${esc(pipe.condition || '')}</span>
+          </td>
+          <td>${pipe.diameter_mm !== null && pipe.diameter_mm !== undefined ? esc(pipe.diameter_mm) + ' mm' : NA}</td>
+          <td>${esc(pipe.length_m)} m (${esc(pipe.length_km)} km)</td>
+          <td>${esc(pipe.surface_m2)} m²</td>
+          <td><span class="tag-status tag-green">${esc(pipe.status || NA)}</span></td>
+          <td>
+            <a href="${studioUrl(pipe.projectId, 'equipements')}" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      rectifiers.forEach(rect => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>
+            <strong>${esc(rect.tag)}${rect.model ? ' (' + esc(rect.model) + ')' : ''}</strong><br>
+            <span style="font-size: 0.75rem; color: var(--saas-dim);">Poste de soutirage &bull; ${esc(rect.projectName)}</span>
+          </td>
+          <td>Calibre ${rect.nominalCurrent !== undefined && rect.nominalCurrent !== null ? esc(rect.nominalCurrent) + 'A' : NA} / ${rect.nominalVoltage !== undefined && rect.nominalVoltage !== null ? esc(rect.nominalVoltage) + 'V' : NA}</td>
+          <td>Puissance ${rect.power !== undefined && rect.power !== null ? esc(rect.power) + ' W' : NA}</td>
+          <td>${rect.status ? esc(rect.status) : NA}</td>
+          <td><span class="tag-status tag-green">${rect.nominalCurrent !== undefined && rect.nominalCurrent !== null ? 'Calibre ' + esc(rect.nominalCurrent) + ' A' : NA}</span></td>
+          <td>
+            <a href="${studioUrl(rect.projectId, 'iccp')}" class="btn-action-icon primary" title="Voir dans le module ICCP">Voir ICCP &rarr;</a>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ── Rendu : liste des projets réels ──
+    function renderProjectsTable() {
+      const tbody = document.getElementById('allProjectsTbody');
+      if (!tbody) return;
+      const projects = getProjectList();
+      tbody.innerHTML = '';
+
+      if (projects.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color: var(--saas-muted); padding:1.5rem;">Aucun projet en base.</td></tr>';
+        return;
+      }
+
+      projects.forEach(p => {
+        const pipelines = getProjectPipelines(p.id);
+        const subtitle = pipelines.length > 0
+          ? pipelines.map(x => x.tag).join(' + ')
+          : 'Aucune canalisation enregistrée';
+        const isActive = p.id === state.activeProjectId;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>
+            <strong>${esc(p.id)} &bull; ${esc(p.name)}</strong>${isActive ? ' <span class="tag-status tag-green" style="margin-left:6px;">Actif</span>' : ''}<br>
+            <span style="font-size: 0.75rem; color: var(--saas-dim);">${esc(subtitle)}</span>
+          </td>
+          <td><span style="font-family: monospace; text-transform: uppercase;">${esc(p.type || NA)}</span></td>
+          <td>${esc(p.standard || NA)}</td>
+          <td>${esc(p.pipelineLengthKm)} km (${esc(p.pipelineSurfaceM2)} m²)</td>
+          <td>${esc(p.rectifiersCount)} poste(s)</td>
+          <td>${esc(p.iccpCurrentA)} A</td>
+          <td><span class="tag-status tag-green">${esc(p.status || NA)}</span></td>
+          <td style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="btn-action-icon" onclick="selectProject('${esc(p.id)}'); showTab('tab-overview')">Sélectionner</button>
+            <a href="${studioUrl(p.id)}" class="btn-action-icon primary">Ouvrir Studio</a>
+            <a href="${studioUrl(p.id, null, { action: 'pdf' })}" class="btn-action-icon" title="Générer le rapport PDF dans le Studio">Rapport PDF</a>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ── Rendu : notifications issues des données réelles ──
+    function renderNotifications() {
+      const list = document.getElementById('notifList');
+      if (!list) return;
+      const project = getProject(state.activeProjectId);
+      const rectifiers = project ? getProjectRectifiers(project.id) : [];
+      const items = [];
+
+      if (project) {
+        const pipelines = getProjectPipelines(project.id);
+        items.push({
+          title: '⚡ ' + esc(project.id) + ' — ' + esc(project.name),
+          body: pipelines.length > 0
+            ? 'Réseau de ' + esc(project.pipelineLengthKm) + ' km — ' + esc(pipelines.length) + ' ouvrage(s) enregistré(s).'
+            : 'Aucune canalisation enregistrée pour ce projet.',
+          time: project.updatedAt ? new Date(project.updatedAt).toLocaleString('fr-FR') : '—'
+        });
+        if (rectifiers.length > 0) {
+          items.push({
+            title: '⚡ Poste de soutirage ' + esc(rectifiers[0].tag),
+            body: 'Calibre ' + esc(rectifiers[0].nominalCurrent) + ' A / ' + esc(rectifiers[0].nominalVoltage) + ' V — courant calculé : ' + esc(project.iccpCurrentA) + ' A.',
+            time: '—'
+          });
+        }
+      } else {
+        items.push({ title: 'Aucun projet actif', body: 'Sélectionnez un projet pour afficher ses données réelles.', time: '—' });
+      }
+
+      list.innerHTML = items.map(it => `
+        <div class="notif-item">
+          <div class="notif-title">${it.title}</div>
+          <div>${it.body}</div>
+          <div class="notif-time">${esc(it.time)}</div>
+        </div>
+      `).join('');
+    }
+
+    // ── Liens vers le Studio : contexte projet conservé ──
+    function syncStudioLinks() {
+      const projectId = state.activeProjectId;
+      document.querySelectorAll('a[data-studio-module]').forEach(link => {
+        const moduleId = link.getAttribute('data-studio-module');
+        link.setAttribute('href', studioUrl(projectId, moduleId));
+      });
+      const overviewLink = document.getElementById('overviewStudioLink');
+      if (overviewLink) overviewLink.setAttribute('href', studioUrl(projectId, 'equipements'));
+      document.querySelectorAll('a.btn-launch-studio, a.btn-topbar-primary[href^="/studio"], a.btn-topbar-primary[href^="/studio#"]').forEach(link => {
+        if (link.hasAttribute('data-studio-module')) return;
+        link.setAttribute('href', studioUrl(projectId, null));
+      });
+    }
+
+    // ── Chargement des données réelles ──
     async function loadRealData() {
       try {
         const res = await fetch('/api/dashboard/summary');
-        if (res.ok) {
-          const d = await res.json();
-          state.data = d;
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const d = await res.json();
+        state.data = d;
 
-          // Engineer
-          if (d.engineer) {
-            document.getElementById('sidebarUserName').innerText = d.engineer.name;
-            document.getElementById('sidebarAvatar').innerText = d.engineer.avatar;
-            document.getElementById('cardHolderDisplay').innerText = d.engineer.name.toUpperCase();
-            document.getElementById('modalCardHolder').innerText = d.engineer.name.toUpperCase();
-            document.getElementById('inputCardName').value = d.engineer.name;
-          }
+        if (d.engineer) {
+          const name = d.engineer.name || NA;
+          const setIfExists = (id, value) => { const el = document.getElementById(id); if (el) el.innerText = value; };
+          setIfExists('sidebarUserName', name);
+          setIfExists('heroEngineerName', name);
+          setIfExists('sidebarAvatar', d.engineer.avatar || name.substring(0, 2).toUpperCase());
+          setIfExists('sidebarUserRole', '● ' + (d.engineer.certification || 'Protection cathodique'));
+          const holder = document.getElementById('cardHolderDisplay');
+          if (holder) holder.innerText = name.toUpperCase();
+          const modalHolder = document.getElementById('modalCardHolder');
+          if (modalHolder) modalHolder.innerText = name.toUpperCase();
+          const inputName = document.getElementById('inputCardName');
+          if (inputName) inputName.value = name;
+        }
 
-          // Real KPIs
-          if (d.kpis) {
-            document.getElementById('kpiNetworkKm').innerHTML = `${d.kpis.protectedNetworkKm} <small style="font-size: 1rem; color: var(--saas-muted);">km</small>`;
-            document.getElementById('kpiNacePercent').innerText = d.kpis.naceComplianceFormatted;
-            document.getElementById('kpiRectifiersCount').innerHTML = `${d.kpis.activeRectifiersCount} <small style="font-size: 1rem; color: var(--saas-muted);">actif</small>`;
-            document.getElementById('kpiCurrentDemand').innerText = `Courant débité : ${d.kpis.totalIccpCurrentA} A (TR-OPTIMAL)`;
-            document.getElementById('kpiQuotaUsage').innerHTML = `${d.kpis.activeProjectsCount} / 10 <small style="font-size: 0.9rem; color: var(--saas-muted);">projets</small>`;
-            document.getElementById('badgeProjectCount').innerText = d.kpis.activeProjectsCount;
+        // Résolution du projet actif : URL → session → premier projet réel
+        const projects = getProjectList();
+        let wanted = getProjectIdFromUrl();
+        if (!wanted) { try { wanted = sessionStorage.getItem('cp_active_project'); } catch (e) {} }
+        if (!wanted || !projects.some(p => p.id === wanted)) {
+          wanted = projects.length > 0 ? projects[0].id : null;
+        }
+        state.activeProjectId = wanted;
 
-            // Pre-seed quick calculator with real values
-            if (d.kpis.protectedNetworkKm) {
-              document.getElementById('quickL').value = d.kpis.protectedNetworkKm;
-              runOverviewCalc();
-            }
-          }
+        renderWorkspaceSelector();
+        renderKpis();
+        renderPipelinesTable();
+        renderProjectsTable();
+        renderNotifications();
+        syncStudioLinks();
+        // Deep-link : ne pas écraser l'onglet demandé dans l'URL (#hash)
+        const urlTab = getTabIdFromUrl();
+        if (urlTab) state.currentTab = urlTab;
+        updateDashboardUrl({ replace: true });
 
-          // Real Pipelines table
-          if (d.pipelines && d.pipelines.length > 0) {
-            const tbody = document.getElementById('overviewPipelinesTbody');
-            tbody.innerHTML = '';
-            d.pipelines.forEach(pipe => {
-              const tr = document.createElement('tr');
-              tr.innerHTML = `
-                <td>
-                  <strong>${pipe.tag}</strong><br>
-                  <span style="font-size: 0.75rem; color: var(--saas-dim);">${pipe.projectName} &bull; ${pipe.coating} ${pipe.condition}</span>
-                </td>
-                <td>${pipe.diameter_mm ? pipe.diameter_mm + ' mm' : 'DN250'}</td>
-                <td>${pipe.length_m} m (${pipe.length_km} km)</td>
-                <td>${pipe.surface_m2} m²</td>
-                <td><span class="tag-status tag-green">${pipe.status}</span></td>
-                <td>
-                  <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
-                </td>
-              `;
-              tbody.appendChild(tr);
-            });
-
-            // Append rectifier row
-            if (d.rectifiers && d.rectifiers.length > 0) {
-              const rect = d.rectifiers[0];
-              const trRect = document.createElement('tr');
-              trRect.innerHTML = `
-                <td>
-                  <strong>${rect.tag} (${rect.model})</strong><br>
-                  <span style="font-size: 0.75rem; color: var(--saas-dim);">Poste de soutirage &bull; ${rect.projectName}</span>
-                </td>
-                <td>Calibre ${rect.nominalCurrent}A / ${rect.nominalVoltage}V</td>
-                <td>Puissance ${rect.power} W</td>
-                <td>P = 0.87 W</td>
-                <td><span class="tag-status tag-green">Débit : ${d.kpis.totalIccpCurrentA} A</span></td>
-                <td>
-                  <a href="/studio#iccp" class="btn-action-icon primary" title="Voir dans le module ICCP">Voir ICCP &rarr;</a>
-                </td>
-              `;
-              tbody.appendChild(trRect);
-            }
-          }
-
-          // Real Projects list
-          if (d.projects && d.projects.length > 0) {
-            const tbodyProj = document.getElementById('allProjectsTbody');
-            tbodyProj.innerHTML = '';
-            d.projects.forEach(p => {
-              const tr = document.createElement('tr');
-              tr.innerHTML = `
-                <td>
-                  <strong>${p.id} &bull; ${p.name}</strong><br>
-                  <span style="font-size: 0.75rem; color: var(--saas-dim);">Canalisations EMK-42 + EMN-11</span>
-                </td>
-                <td><span style="font-family: monospace; text-transform: uppercase;">${p.type}</span></td>
-                <td>${p.standard}</td>
-                <td>${p.pipelineLengthKm} km (${p.pipelineSurfaceM2} m²)</td>
-                <td>${p.rectifiersCount} poste(s)</td>
-                <td>${p.iccpCurrentA} A</td>
-                <td><span class="tag-status tag-green">${p.status}</span></td>
-                <td>
-                  <a href="/studio" class="btn-action-icon primary">Ouvrir Studio</a>
-                  <button class="btn-action-icon" onclick="downloadSimulatedInvoice('${p.name}', '${p.iccpCurrentA}')">Rapport</button>
-                </td>
-              `;
-              tbodyProj.appendChild(tr);
-            });
-          }
+        const dbStatus = document.getElementById('statusDatabase');
+        if (dbStatus) {
+          dbStatus.innerHTML = `<span style="color: #34d399;">● Connectée (${projects.length} projet(s) chargé(s))</span>`;
+        }
+        const engineStatus = document.getElementById('statusEngine');
+        if (engineStatus) {
+          engineStatus.innerHTML = '<span style="color: #34d399;">● Actif (moteur embarqué engine.js)</span>';
         }
       } catch (err) {
         console.warn('Real data fetch error:', err);
+        state.data = null;
+        state.activeProjectId = null;
+        document.querySelectorAll('#kpiNetworkKm, #kpiNacePercent, #kpiRectifiersCount, #kpiQuotaUsage')
+          .forEach(el => { el.innerText = NA; });
+        const detailEl = document.getElementById('kpiNetworkDetail');
+        if (detailEl) detailEl.innerText = 'Base de données indisponible';
+        const tbody = document.getElementById('overviewPipelinesTbody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#f87171; padding:1.5rem;">Données indisponibles (base cp_data.db non joignable).</td></tr>';
+        const tbodyProj = document.getElementById('allProjectsTbody');
+        if (tbodyProj) tbodyProj.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#f87171; padding:1.5rem;">Données indisponibles (base cp_data.db non joignable).</td></tr>';
+        const dbStatus = document.getElementById('statusDatabase');
+        if (dbStatus) dbStatus.innerHTML = '<span style="color:#f87171;">● Indisponible</span>';
+        syncStudioLinks();
       }
     }
 
@@ -1936,7 +2222,7 @@
         tag.innerText = 'Modérément corrosif (10 - 50 Ω·m)';
         tag.style.color = '#fbbf24';
       } else {
-        tag.innerText = 'Faiblement corrosif (> 50 Ω·m) \u2022 Conforme Projet EMK';
+        tag.innerText = 'Faiblement corrosif (> 50 Ω·m)';
         tag.style.color = '#34d399';
       }
     }
@@ -2041,7 +2327,7 @@
                       `Date d'émission : 28/09/2026\n` +
                       `Émetteur : CP Engineer Pro SaaS\n` +
                       `Client : Ing. Mustapha Korichi - Spécialiste Protection Cathodique\n` +
-                      `Projet rattaché : Projet EMK (ICCP 12.78 km)\n` +
+                      `Projet rattaché : ${state.activeProjectId ? (getProject(state.activeProjectId)?.name || state.activeProjectId) : 'N/A'}\n` +
                       `Montant réglé : ${amount} € TTC (TVA 20% incluse)\n` +
                       `Statut : Payé via Carte Test Visa 4242 (Mode Sandbox)\n` +
                       `=============================================\n` +
@@ -2063,23 +2349,70 @@
     function closeNewProjectModal() {
       document.getElementById('newProjectModal').style.display = 'none';
     }
-    function handleCreateProject(e) {
+    async function handleCreateProject(e) {
       e.preventDefault();
-      const name = document.getElementById('newProjName').value;
-      const std = document.getElementById('newProjStandard').value;
-      const len = document.getElementById('newProjLength').value + ' km';
+      const nameEl = document.getElementById('newProjName');
+      const stdEl = document.getElementById('newProjStandard');
+      const lenEl = document.getElementById('newProjLength');
+      const name = nameEl ? nameEl.value.trim() : '';
+      const std = stdEl ? stdEl.value : 'NACE SP0169';
+      const lengthKm = lenEl ? (parseFloat(lenEl.value) || 0) : 0;
+
+      if (!name) {
+        showToast('Le nom du projet est requis.', 'warning');
+        return;
+      }
+
+      const generatedId = ('PROJ-' + Date.now().toString(36).toUpperCase()).replace(/[^A-Z0-9\-_]/g, '');
+
+      // Création réelle côté base lorsque la session est authentifiée.
+      let createdId = null;
+      try {
+        const res = await fetch('/api/projects', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: generatedId,
+            name: name,
+            type: 'mixte',
+            data: { project: { id: generatedId, name: name, cpSystemType: 'mixte', standard: std } }
+          })
+        });
+        if (res.ok) createdId = generatedId;
+      } catch (err) {
+        console.debug('[Dashboard] Création via API indisponible:', err);
+      }
 
       closeNewProjectModal();
-      showToast(`Projet '${name}' créé avec succès ! Ouverture du Studio...`, 'success');
-      setTimeout(() => { window.location.href = '/studio'; }, 800);
+
+      if (createdId) {
+        showToast('Projet ' + createdId + ' créé en base — ouverture du Studio…', 'success');
+        setTimeout(() => {
+          window.location.href = studioUrl(createdId, 'dashboard', { newid: createdId, name: name, length: String(lengthKm) });
+        }, 600);
+        return;
+      }
+
+      // Session non authentifiée : la création se poursuit dans le Studio
+      // (aucune donnée inventée, aucun faux succès).
+      showToast('Ouverture du Studio pour créer le projet « ' + name + ' »…', 'info');
+      setTimeout(() => {
+        window.location.href = studioUrl(null, 'dashboard', {
+          new: '1', name: name, id: generatedId, standard: std, length: String(lengthKm)
+        });
+      }, 600);
     }
 
-    function switchWorkspace(name) {
-      if (name === 'sandbox_lab') {
+    function switchWorkspace(value) {
+      if (value === 'sandbox_lab') {
         openNewProjectModal();
         return;
       }
-      showToast(`Espace de travail actif : ${name}`, 'info');
+      if (!value) return;
+      if (selectProject(value)) {
+        showToast('Projet actif : ' + value, 'info');
+      }
     }
 
     function showToast(message, type = 'info') {
@@ -2105,8 +2438,19 @@
         const res = await fetch('/api/v1/health');
         const latency = Math.round(performance.now() - start);
         document.getElementById('liveStatusLatency').innerText = latency + ' ms';
+        const data = await res.json();
+        const versionEl = document.getElementById('liveStatusVersion');
+        if (versionEl) versionEl.innerText = data && data.version ? ('v' + data.version) : NA;
+        const uptimeEl = document.getElementById('liveStatusUptime');
+        if (uptimeEl && data && Number.isFinite(Number(data.uptimeSeconds))) {
+          const total = Math.floor(Number(data.uptimeSeconds));
+          const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60);
+          uptimeEl.innerText = h + 'h ' + m + 'min';
+        }
       } catch (e) {
-        document.getElementById('liveStatusLatency').innerText = '12 ms';
+        document.getElementById('liveStatusLatency').innerText = NA;
+        const versionEl = document.getElementById('liveStatusVersion');
+        if (versionEl) versionEl.innerText = NA;
       }
     }
 
@@ -2138,11 +2482,48 @@
       });
     }
 
+    // ============================================================
+    // ROUTAGE DU DASHBOARD : /dashboard?project=<ID>#<onglet>
+    //   - deep-link, refresh et retour/avant navigateur
+    // ============================================================
+    function applyDashboardUrl() {
+      window.__cpApplyingUrl = true;
+      try {
+        const tabId = getTabIdFromUrl();
+        if (tabId) showTab(tabId);
+
+        const wanted = getProjectIdFromUrl();
+        if (wanted && state.data) {
+          if (state.activeProjectId !== wanted) selectProject(wanted);
+        }
+      } finally {
+        window.__cpApplyingUrl = false;
+      }
+    }
+
+    window.addEventListener('hashchange', applyDashboardUrl);
+    window.addEventListener('popstate', () => {
+      applyDashboardUrl();
+      if (state.data) {
+        const wanted = getProjectIdFromUrl();
+        if (wanted && getProject(wanted)) selectProject(wanted);
+      }
+    });
+
     // Initialize
-    loadRealData();
-    runWennerCalc();
-    runDwightCalc();
-    checkLiveServerHealth();
+    (async function initDashboard() {
+      await loadRealData();
+      runWennerCalc();
+      runDwightCalc();
+      checkLiveServerHealth();
+      applyDashboardUrl();
+      if (state.data) {
+        const wanted = getProjectIdFromUrl();
+        if (wanted && getProject(wanted) && state.activeProjectId !== wanted) {
+          selectProject(wanted);
+        }
+      }
+    })();
   </script>
 </body>
 </html>
