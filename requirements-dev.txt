@@ -1,0 +1,74 @@
+# ============================================================
+# CP Engineer Pro — Dépendances backend DÉVELOPPEMENT / TEST
+# ============================================================
+# Ce fichier liste UNIQUEMENT les dépendances NÉCESSAIRES
+# au développement, aux tests et au diagnostic local.
+#
+# ⚠️  Ces dépendances NE SONT PAS requises en production.
+#     Le fichier requirements.txt contient tout le strict
+#     nécessaire au fonctionnement de backend.py.
+#
+# Installation (dev uniquement) :
+#   python -m venv venv
+#   source venv/bin/activate              # Linux / macOS
+#   venv\Scripts\activate                  # Windows
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# ⚠️  NE JAMAIS installer ce fichier sur un serveur de
+#     production : pytest et requests augmentent la surface
+#     d'attaque sans bénéfice fonctionnel.
+#
+# RÈGLES :
+#   - Aucune dépendance n'est ajoutée sans un usage réel
+#     dans un script de test, de diagnostic ou de qualité.
+#   - Les versions sont ÉPINGLÉES (==) pour la reproductibilité.
+# ============================================================
+
+
+# ─────────────────────────────────────────────────────────────
+# 1. CLIENT HTTP — pour test_logout.py
+# ─────────────────────────────────────────────────────────────
+# Utilisé par : test_logout.py
+#   - requests.Session()        → gestion cookies persistants
+#   - requests.get / post       → appels aux endpoints /api/*
+#   - requests.RequestException → gestion d'erreurs réseau
+#
+# Permet de tester le flux complet de révocation JWT
+# (CRITICAL-03) sans navigateur ni curl.
+requests==2.32.3
+
+
+# ─────────────────────────────────────────────────────────────
+# 2. TESTS UNITAIRES — optionnel (roadmap LOW-15)
+# ─────────────────────────────────────────────────────────────
+# Utilisé par : (à venir) tests/test_*.py
+#
+# pytest est ajouté pour préparer la migration future de
+# test_logout.py vers une suite pytest formelle, et pour
+# permettre l'écriture de tests unitaires sur :
+#   - coordUtils.py (CoordSystem.is_valid_coord, distance…)
+#   - backend.py   (_validate_coordinates, _assert_project_access…)
+#
+# Si vous ne lancez JAMAIS de tests automatisés, vous pouvez
+# commenter ces deux lignes — elles ne bloquent rien.
+pytest==8.2.0
+
+
+# ─────────────────────────────────────────────────────────────
+# 3. COUVERTURE DE CODE — optionnel
+# ─────────────────────────────────────────────────────────────
+# Utilisé par : pytest --cov=backend --cov=coordUtils
+# Fournit le rapport de couverture HTML/terminal.
+# À commenter si vous n'utilisez pas pytest.
+pytest-cov==5.0.0
+
+
+# ─────────────────────────────────────────────────────────────
+# 4. REDIS (dev) — OPTIONNEL
+# ─────────────────────────────────────────────────────────────
+# Décommenter UNIQUEMENT si vous testez le rate limiting
+# distribué multi-workers en local.
+# En développement simple (1 worker), le fallback mémoire
+# de backend.py suffit.
+#
+# redis==5.0.7

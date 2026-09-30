@@ -1,0 +1,157 @@
+// ============================================================
+// schema.prisma — CP Engineer Pro SaaS
+// Multi-Tenant PostgreSQL Schema with RLS Support
+// ============================================================
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum TenantPlan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum TenantStatus {
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+}
+
+enum TenantIsolationMode {
+  SHARED_RLS
+  DEDICATED_DATABASE
+}
+
+enum UserRole {
+  ADMIN
+  LEAD_ENGINEER
+  FIELD_TECHNICIAN
+  VIEWER
+}
+
+enum CalculationType {
+  SACP
+  ICCP
+  GROUNDBED
+  ATTENUATION
+  INTERFERENCE
+  CABLE_SIZING
+}
+
+// ─── 1. Modèle Organisation (Tenant) ───
+model Tenant {
+  id              String               @id @default(uuid()) @db.Uuid
+  name            String               @db.VarChar(255)
+  slug            String               @unique @db.VarChar(100)
+  status          TenantStatus         @default(ACTIVE)
+  plan            TenantPlan           @default(PRO)
+  isolationMode   TenantIsolationMode  @default(SHARED_RLS)
+  dedicatedDbUri  String?              @db.Text
+  stripeCustomerId String?             @unique @db.VarChar(255)
+  stripeSubscriptionId String?         @unique @db.VarChar(255)
+  createdAt       DateTime             @default(now()) @db.Timestamptz()
+  updatedAt       DateTime             @updatedAt @db.Timestamptz()
+
+  users           User[]
+  projects        Project[]
+  calculationLogs CalculationLog[]
+  apiQuotas       ApiQuota[]
+
+  @@map("tenants")
+}
+
+// ─── 2. Modèle Utilisateur ───
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @db.Uuid
+  email        String    @db.VarChar(255)
+  passwordHash String    @db.VarChar(255)
+  firstName    String    @db.VarChar(100)
+  lastName     String    @db.VarChar(100)
+  role         UserRole  @default(LEAD_ENGINEER)
+  hasAcceptedTerms Boolean   @default(false)
+  termsAcceptedAt  DateTime? @db.Timestamptz()
+  cookieConsent    Json?     // { analytics: boolean, marketing: boolean, necessary: true }
+  cookieConsentAt  DateTime? @db.Timestamptz()
+  createdAt    DateTime  @default(now()) @db.Timestamptz()
+  updatedAt    DateTime  @updatedAt @db.Timestamptz()
+
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projects     Project[]
+  calculationLogs CalculationLog[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+// ─── 3. Modèle Projet CP (Sous RLS) ───
+model Project {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @db.Uuid
+  legacyId    String?   @db.VarChar(100) // Pour migration idempotente depuis IndexedDB
+  name        String    @db.VarChar(255)
+  description String?   @db.Text
+  standard    String    @default("ISO 15589-1") @db.VarChar(50)
+  data        Json      @default("{}") // Équipements, géométries, sols
+  version     Int       @default(1)    // Pour résolution optimiste de conflits
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz()
+  updatedAt   DateTime  @updatedAt @db.Timestamptz()
+
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  calculationLogs CalculationLog[]
+
+  @@unique([tenantId, legacyId])
+  @@index([tenantId])
+  @@map("projects")
+}
+
+// ─── 4. Journal d'Audit des Calculs & Facturation Quota ───
+model CalculationLog {
+  id           String          @id @default(uuid()) @db.Uuid
+  tenantId     String          @db.Uuid
+  userId       String?         @db.Uuid
+  projectId    String?         @db.Uuid
+  type         CalculationType
+  inputs       Json
+  outputs      Json
+  isCertified  Boolean         @default(true)
+  executionMs  Int
+  createdAt    DateTime        @default(now()) @db.Timestamptz()
+
+  tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user         User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  project      Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("calculation_logs")
+}
+
+// ─── 5. Quotas d'Appels API (Stripe Metered Billing) ───
+model ApiQuota {
+  id                 String    @id @default(uuid()) @db.Uuid
+  tenantId           String    @db.Uuid
+  periodStart        DateTime  @db.Timestamptz()
+  periodEnd          DateTime  @db.Timestamptz()
+  includedUnits      Int       @default(500) // Ex: 500 calculs/mois/siège
+  usedUnits          Int       @default(0)
+  overageUnits       Int       @default(0)
+  stripeUsageRecordId String?  @db.VarChar(255)
+  createdAt          DateTime  @default(now()) @db.Timestamptz()
+  updatedAt          DateTime  @updatedAt @db.Timestamptz()
+
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, periodStart])
+  @@index([tenantId])
+  @@map("api_quotas")
+}

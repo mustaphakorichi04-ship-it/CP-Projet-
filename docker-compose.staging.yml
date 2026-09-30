@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # ─── 1. Base de données PostgreSQL avec RLS ───
+  postgres-staging:
+    image: postgres:16-alpine
+    container_name: cp-engineer-postgres-staging
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cp_saas_user
+      POSTGRES_PASSWORD: cp_saas_password_dev_2026
+      POSTGRES_DB: cp_engineer_saas
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/postgres/init-rls.sql:/docker-entrypoint-initdb.d/init-rls.sql:ro
+      - postgres_staging_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cp_saas_user -d cp_engineer_saas"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── 2. Cache & Message Broker Redis ───
+  redis-staging:
+    image: redis:7-alpine
+    container_name: cp-engineer-redis-staging
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_staging_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── 3. Backend NestJS & BFF API ───
+  api:
+    build:
+      context: .
+      file: ./apps/api/Dockerfile
+    container_name: cp-engineer-api-staging
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: "postgresql://cp_saas_user:cp_saas_password_dev_2026@postgres-staging:5432/cp_engineer_saas?schema=public"
+      JWT_SECRET: "cp_saas_super_secret_staging_key_2026"
+      CORS_ORIGIN: "http://localhost:80"
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres-staging:
+        condition: service_healthy
+      redis-staging:
+        condition: service_healthy
+
+  # ─── 4. Frontend PWA & Reverse-Proxy Nginx ───
+  web:
+    image: nginx:alpine
+    container_name: cp-engineer-web-staging
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./:/usr/share/nginx/html:ro
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+
+volumes:
+  postgres_staging_data:
+  redis_staging_data:

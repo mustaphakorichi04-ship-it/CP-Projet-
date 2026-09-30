@@ -1,0 +1,69 @@
+{
+  "project": {
+    "name": "",
+    "designLifeYears": 25,
+    "governingStandards": ["ISO 15589-1", "NACE SP0169"]
+  },
+  "protectedStructure": {
+    "type": "pipeline_enterre",
+    "length_m": 0,
+    "outerDiameter_m": 0,
+    "wallThickness_mm": 0,
+    "coatingEfficiency": 0,
+    "defectDensity": 0,
+    "designCurrentDensity_mA_m2": 0,
+    "targetOffPotential_mV_CuCuSO4": -850
+  },
+  "groundbed": {
+    "type": "deep_well",
+    "totalDepth_m": 0,
+    "activeDepth_m": 0,
+    "boreholeDiameter_mm": 0,
+    "anodeCount": 0,
+    "anodeLength_m": 0,
+    "anodeDiameter_mm": 0,
+    "anodeMass_kg": 0,
+    "anodeMaterial": "",
+    "backfill": "",
+    "layers": [
+      {
+        "topDepth_m": 0,
+        "bottomDepth_m": 0,
+        "resistivity_ohm_m": 0
+      }
+    ]
+  },
+  "rectifier": {
+    "designCurrent_A": 0,
+    "backEmf_V": 0,
+    "cableLength_m": 0,
+    "cableSection_mm2": 0,
+    "cableMaterial": "cu",
+    "allowableVoltageDrop_V": 0
+  },
+  "acInterference": {
+    "present": false,
+    "parallelLength_m": 0,
+    "separation_m": 0,
+    "lineVoltage_kV": 0,
+    "lineCurrent_A": 0,
+    "frequency_Hz": 50,
+    "soilConductivity_S_m": 0,
+    "measuredJ_AC_A_m2": null,
+    "measuredJ_DC_A_m2": null,
+    "touchVoltage_V": null
+  },
+  "measurements": {
+    "offPotential_mV_CuCuSO4": [],
+    "onPotential_mV_CuCuSO4": [],
+    "polarization_mV": [],
+    "referenceElectrode": "CuCuSO4",
+    "temperature_C": 25
+  },
+  "evidence": {
+    "soilSurveyFile": "",
+    "manufacturerDatasheets": [],
+    "fieldTestReports": [],
+    "notes": ""
+  }
+}

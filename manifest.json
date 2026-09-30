@@ -1,0 +1,25 @@
+{
+  "name": "CP Engineer Pro SaaS",
+  "short_name": "CPEngineer",
+  "description": "Industrial Cathodic Protection Engineering Suite (NACE SP0169 / ISO 15589-1)",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#111827",
+  "theme_color": "#0284c7",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "vendor/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "vendor/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["engineering", "productivity", "utilities"]
+}

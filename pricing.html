@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tarification | CP Engineer Pro</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-primary, #0a0e17);
+      color: var(--text-primary, #f5f5f7);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .top-nav {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2rem;
+      border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      background: rgba(10, 14, 23, 0.85);
+      backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #007aff, #06b6d4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #fff;
+      font-size: 16px;
+    }
+    .brand-title { font-weight: 700; font-size: 1.1rem; letter-spacing: -0.02em; }
+    .nav-links { display: flex; align-items: center; gap: 20px; }
+    .nav-link {
+      color: var(--text-secondary, #aeaeb2);
+      text-decoration: none;
+      font-size: 0.92rem;
+      font-weight: 500;
+      transition: color 0.2s ease;
+    }
+    .nav-link:hover, .nav-link.active { color: #fff; }
+    .btn-nav {
+      background: #007aff;
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: background 0.2s ease;
+    }
+    .btn-nav:hover { background: #0055b3; }
+
+    .hero-pricing {
+      text-align: center;
+      padding: 4rem 1.5rem 2rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      background: rgba(0, 122, 255, 0.15);
+      border: 1px solid rgba(0, 122, 255, 0.3);
+      color: #409cff;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .hero-pricing h1 {
+      font-size: 2.8rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 1rem;
+      background: linear-gradient(180deg, #ffffff 0%, #a1a1aa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero-pricing p {
+      color: var(--text-secondary, #aeaeb2);
+      font-size: 1.15rem;
+      line-height: 1.6;
+    }
+
+    .billing-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin: 2.5rem 0 3.5rem;
+      font-weight: 500;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 52px;
+      height: 28px;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255, 255, 255, 0.15);
+      transition: .3s;
+      border-radius: 28px;
+      border: 1px solid var(--border-color);
+    }
+    .slider:before {
+      position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+    }
+    input:checked + .slider { background-color: #007aff; }
+    input:checked + .slider:before { transform: translateX(24px); }
+
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1.5rem 5rem;
+      width: 100%;
+    }
+    .pricing-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      border-radius: 20px;
+      padding: 2.5rem;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+    .pricing-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(0, 122, 255, 0.4);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    }
+    .pricing-card.featured {
+      background: linear-gradient(180deg, rgba(0, 122, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
+      border: 2px solid #007aff;
+      box-shadow: 0 8px 32px rgba(0, 122, 255, 0.2);
+    }
+    .popular-tag {
+      position: absolute;
+      top: -13px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, #007aff, #06b6d4);
+      color: #fff;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 14px;
+      border-radius: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .plan-name { font-size: 1.4rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .plan-desc { color: var(--text-secondary, #aeaeb2); font-size: 0.9rem; min-height: 40px; margin-bottom: 1.5rem; }
+    .plan-price { font-size: 2.8rem; font-weight: 800; display: flex; align-items: baseline; gap: 4px; margin-bottom: 2rem; }
+    .plan-currency { font-size: 1.5rem; }
+    .plan-period { font-size: 1rem; color: var(--text-secondary); font-weight: 400; }
+    .feature-list { list-style: none; margin-bottom: 2.5rem; flex-grow: 1; }
+    .feature-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      margin-bottom: 0.9rem;
+    }
+    .feature-icon { color: #34c759; font-weight: 800; }
+    .btn-plan {
+      display: block;
+      width: 100%;
+      text-align: center;
+      padding: 12px;
+      border-radius: 10px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1rem;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border: 1px solid var(--border-color);
+      transition: all 0.2s ease;
+    }
+    .btn-plan:hover { background: rgba(255, 255, 255, 0.2); }
+    .btn-plan.primary {
+      background: #007aff;
+      border-color: #007aff;
+    }
+    .btn-plan.primary:hover { background: #0055b3; }
+
+    footer {
+      margin-top: auto;
+      border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-muted, #6e6e73);
+      font-size: 0.88rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="top-nav">
+    <a href="/dashboard" class="brand">
+      <div class="brand-logo">CP</div>
+      <div class="brand-title">CP Engineer Pro</div>
+      <span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.35); color:#fbbf24; font-size:0.68rem; font-weight:700; padding:2px 7px; border-radius:4px; text-transform:uppercase; letter-spacing:0.04em; margin-left:6px;">Sandbox DEMO</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/dashboard" class="nav-link">Tableau de bord</a>
+      <a href="/studio" class="nav-link" style="color: #38bdf8;">⚡ Studio CP</a>
+      <a href="/pricing" class="nav-link active">Tarification</a>
+      <a href="/status" class="nav-link">Statut Système</a>
+      <a href="/login" class="btn-nav">Connexion</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero-pricing">
+      <span class="badge">NACE SP0169 &bull; ISO 15589-1</span>
+      <h1>Plans d'ingénierie et de calcul CP</h1>
+      <p>Des outils dimensionnés pour les bureaux d'études, les exploitants de pipelines et les ingénieurs corrosion de classe mondiale.</p>
+
+      <div class="billing-toggle">
+        <span>Facturation mensuelle</span>
+        <label class="switch">
+          <input type="checkbox" id="annualToggle" onchange="toggleBilling()">
+          <span class="slider"></span>
+        </label>
+        <span>Facturation annuelle <strong style="color: #34c759;">(-20%)</strong></span>
+      </div>
+    </section>
+
+    <div class="pricing-grid">
+      <!-- Starter -->
+      <div class="pricing-card">
+        <h3 class="plan-name">Standard</h3>
+        <p class="plan-desc">Pour ingénieurs indépendants et diagnostics ponctuels.</p>
+        <div class="plan-price">
+          <span class="plan-currency">€</span><span id="price-starter">99</span><span class="plan-period">/mois</span>
+        </div>
+        <ul class="feature-list">
+          <li class="feature-item"><span class="feature-icon">✓</span> Calculs SACP (Anodes galvaniques)</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Atténuation de potentiel (Uhlig)</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Jusqu'à 5 projets simultanés</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Rapports PDF standard conformes NACE</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Exportation de données GeoJSON</li>
+        </ul>
+        <a href="/login" class="btn-plan">Démarrer avec Standard</a>
+      </div>
+
+      <!-- Pro -->
+      <div class="pricing-card featured">
+        <span class="popular-tag">Le Plus Populaire</span>
+        <h3 class="plan-name">Professionnel</h3>
+        <p class="plan-desc">Pour bureaux d'études et experts en protection cathodique.</p>
+        <div class="plan-price">
+          <span class="plan-currency">€</span><span id="price-pro">249</span><span class="plan-period">/mois</span>
+        </div>
+        <ul class="feature-list">
+          <li class="feature-item"><span class="feature-icon">✓</span> Tout ce qui est inclus dans Standard</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Moteur ICCP complet (Soutirage de courant)</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Simulation 3D & Résistivité de sol Wenner</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Projets et segments de pipeline illimités</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Analyse interférences CA (NACE SP0177)</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Support technique prioritaire 24/7</li>
+        </ul>
+        <a href="/login" class="btn-plan primary">Démarrer l'essai Pro</a>
+      </div>
+
+      <!-- Enterprise -->
+      <div class="pricing-card">
+        <h3 class="plan-name">Entreprise</h3>
+        <p class="plan-desc">Pour grands opérateurs énergétiques et consortiums industriels.</p>
+        <div class="plan-price">
+          <span class="plan-currency">€</span><span id="price-enterprise">599</span><span class="plan-period">/mois</span>
+        </div>
+        <ul class="feature-list">
+          <li class="feature-item"><span class="feature-icon">✓</span> Tout ce qui est inclus dans Professionnel</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Multi-tenancy et isolation stricte des données</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Intégration SIG / ESRI / Cartes personnalisées</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Accès API REST complet & Webhooks</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> Déploiement sur site ou Cloud dédié</li>
+          <li class="feature-item"><span class="feature-icon">✓</span> SLA 99.9% garanti avec contrat</li>
+        </ul>
+        <a href="/dashboard" class="btn-plan">Contacter l'équipe Enterprise</a>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <p>&copy; 2026 CP Engineer Pro. Conforme NACE SP0169, ISO 15589-1 et EN 12954.</p>
+  </footer>
+
+  <script>
+    function toggleBilling() {
+      const isAnnual = document.getElementById('annualToggle').checked;
+      document.getElementById('price-starter').innerText = isAnnual ? '79' : '99';
+      document.getElementById('price-pro').innerText = isAnnual ? '199' : '249';
+      document.getElementById('price-enterprise').innerText = isAnnual ? '479' : '599';
+    }
+  </script>
+</body>
+</html>

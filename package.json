@@ -1,0 +1,46 @@
+{
+  "name": "cp-engineer-pro",
+  "version": "9.6.0",
+  "description": "CP Engineer Pro — Industrial cathodic protection engineering suite (NACE SP0169 / ISO 15589-1)",
+  "private": true,
+  "license": "UNLICENSED",
+  "author": "CP Engineer Pro Team",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:engineering": "node --test tests/engineering-core.test.js",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "vendorize": "bash vendorize.sh",
+    "vendorize:dry": "bash vendorize.sh --dry-run"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "jsdom": "^24.0.0"
+  },
+  "vitest": {
+    "config": "./tests/vitest.config.js"
+  },
+  "keywords": [
+    "cathodic-protection",
+    "corrosion",
+    "NACE",
+    "ISO-15589",
+    "ICCP",
+    "SACP",
+    "pipeline"
+  ],
+  "repository": {
+    "type": "local",
+    "url": "file://./"
+  }
+}

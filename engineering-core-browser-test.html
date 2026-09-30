@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <title>CP Engineer Pro - Tests du moteur</title>
+    <style>
+        body { font-family: Consolas, monospace; margin: 2rem; background: #111827; color: #e5e7eb; }
+        h1 { font-size: 1.25rem; }
+        #summary { padding: 1rem; margin: 1rem 0; border: 1px solid #374151; }
+        .pass { color: #86efac; }
+        .fail { color: #fca5a5; }
+        pre { white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>Tests numeriques du moteur CP</h1>
+    <div id="summary">Execution...</div>
+    <pre id="results"></pre>
+    <script src="engine.js"></script>
+    <script src="acCorrosionEngine.js"></script>
+    <script src="micEngine.js"></script>
+    <script src="cableLengthEngine.js"></script>
+    <script src="ICCPOptimizationEngine.js"></script>
+    <script>
+        (function () {
+            'use strict';
+
+            const lines = [];
+            let passed = 0;
+            let failed = 0;
+
+            function closeEnough(actual, expected, tolerance) {
+                return Math.abs(actual - expected) <= tolerance;
+            }
+
+            function check(name, condition, details) {
+                if (condition) {
+                    passed += 1;
+                    lines.push('PASS  ' + name);
+                } else {
+                    failed += 1;
+                    lines.push('FAIL  ' + name + (details ? ' - ' + details : ''));
+                }
+            }
+
+            function run() {
+                if (typeof CalculationEngine === 'undefined') {
+                    throw new Error('CalculationEngine non charge');
+                }
+
+                const cp = CalculationEngine.requiredCurrent(100, 5, 0.95, 0.03, 1.2, 'ISO 15589-1');
+                check('Courant CP et conversion mA/m2',
+                    closeEnough(cp.exposedArea, 0.18, 1e-12) &&
+                    closeEnough(cp.currentAmperes, 0.0009, 1e-12) &&
+                    cp.units.currentDensity === 'mA/m²');
+
+                const invalidCp = CalculationEngine.checkCPParameters(100, 5, 1.2, -0.1, 1.2);
+                check('CP refuse des parametres hors bornes',
+                    invalidCp.valid === false && invalidCp.warnings.length >= 2);
+
+                check('API worker CP partage la validation centrale',
+                    typeof CalculationEngine.checkCPParameters === 'function');
+
+                const expectedDwight = (100 / (2 * Math.PI)) * (Math.log(40) - 1);
+                const dwight = CalculationEngine.anodeResistanceVertical(100, 1, 0.1);
+                check('Resistance anode Dwight', closeEnough(dwight, expectedDwight, 1e-12),
+                    'actual=' + dwight + ' expected=' + expectedDwight);
+
+                const noCurrent = CalculationEngine.designGroundbed({
+                    rho: 30, totalDepth: 200, activeDepth: 150,
+                    anodeCount: 16, anodeLength: 1.5, anodeDiameter: 75,
+                    anodeWeight: 25, anodeCapacity: 2.5,
+                    cableLength: 100, cableSection: 35,
+                    agingFactor: 1.2, safetyFactor: 1.1, targetCurrent: 0
+                });
+                check('Groundbed refuse courant arbitraire', noCurrent.error === true);
+
+                const invalidGroundbed = CalculationEngine.designGroundbed({
+                    rho: 30, totalDepth: 200, activeDepth: 150,
+                    anodeCount: 0, anodeLength: 1.5, anodeDiameter: 75,
+                    anodeWeight: 25, anodeCapacity: 2.5,
+                    cableLength: 100, cableSection: 35,
+                    agingFactor: 1.2, safetyFactor: 1.1, targetCurrent: 10
+                });
+                check('Groundbed refuse une geometrie invalide', invalidGroundbed.error === true);
+
+                const undersized = CalculationEngine.designGroundbed({
+                    rho: 30, totalDepth: 200, activeDepth: 150,
+                    anodeCount: 4, anodeLength: 1.5, anodeDiameter: 75,
+                    anodeWeight: 25, anodeCapacity: 2.5,
+                    cableLength: 100, cableSection: 35,
+                    agingFactor: 1.2, safetyFactor: 1.1,
+                    targetCurrent: 10, desiredLife: 20
+                });
+                check('Groundbed detecte sous-dimensionne',
+                    undersized.error === undefined &&
+                    undersized.requiredAnodeCount === 5 &&
+                    undersized.lifeOk === false);
+
+                const layered = CalculationEngine.designGroundbed({
+                    rho: 100, totalDepth: 150, activeDepth: 150,
+                    anodeCount: 16, anodeLength: 1.5, anodeDiameter: 75,
+                    anodeWeight: 25, anodeCapacity: 2.5,
+                    cableLength: 100, cableSection: 35,
+                    agingFactor: 1.2, safetyFactor: 1.1,
+                    targetCurrent: 10, desiredLife: 25,
+                    layers: [
+                        { topDepth: 0, bottomDepth: 75, rho: 30 },
+                        { topDepth: 75, bottomDepth: 150, rho: 90 }
+                    ]
+                });
+                check('Groundbed trace la stratigraphie',
+                    layered.error === undefined &&
+                    layered.groundbedModel === 'LAYERED_DEPTH_WEIGHTED_APPROXIMATION' &&
+                    closeEnough(layered.rho_eff, 60, 1e-12) &&
+                    closeEnough(layered.rho_harmonic, 45, 1e-12) &&
+                    closeEnough(layered.layerSensitivityRatio, 4 / 3, 1e-12) &&
+                    layered.designStatus === 'PRELIMINARY_ONLY' &&
+                    layered.requiresSpecialistStudy === true);
+
+                const invalidLayers = CalculationEngine.designGroundbed({
+                    rho: 100, totalDepth: 150, activeDepth: 150,
+                    anodeCount: 16, anodeLength: 1.5, anodeDiameter: 75,
+                    anodeWeight: 25, anodeCapacity: 2.5,
+                    cableLength: 100, cableSection: 35,
+                    agingFactor: 1.2, safetyFactor: 1.1,
+                    targetCurrent: 10, layers: [{ depth: 75, rho: 0 }]
+                });
+                check('Groundbed refuse une couche invalide', invalidLayers.error === true);
+
+                const warningLayers = CalculationEngine.designGroundbed({
+                    rho: 100, totalDepth: 100, activeDepth: 150,
+                    anodeCount: 3000, anodeLength: 1.5, anodeDiameter: 75,
+                    anodeWeight: 25, anodeCapacity: 2.5,
+                    cableLength: 100, cableSection: 35,
+                    agingFactor: 1.2, safetyFactor: 1.1,
+                    targetCurrent: 10, desiredLife: 25,
+                    layers: [{ depth: 50, rho: 30 }, { depth: 50, rho: 90 }]
+                });
+                check('Groundbed conserve les avertissements combines',
+                    warningLayers._warning &&
+                    warningLayers._warning.includes('profondeur des couches') &&
+                    warningLayers._warning.includes('Espacement corrigé'));
+
+                const criteria = CalculationEngine.validateProtectionCriteria(-900, 50);
+                check('Validation CP exige les deux criteres',
+                    criteria.offPotentialPass === true &&
+                    criteria.polarizationPass === false &&
+                    criteria.globalPass === false);
+
+                const missingOff = CalculationEngine.validateProtectionCriteria(null, 150);
+                check('Potentiel OFF absent reste non conforme',
+                    missingOff.offPotentialPass === false && missingOff.globalPass === false);
+
+                // GAP-05 : Critere surprotection V_on
+                const overProtOk = CalculationEngine.validateProtectionCriteria(-900, 150, -1000);
+                check('GAP-05 : V_on=-1000 >= -1200 → surprotection OK',
+                    overProtOk.overProtectionPass === true &&
+                    overProtOk.overProtectionMessage.indexOf('-1200') !== -1);
+
+                const overProtFail = CalculationEngine.validateProtectionCriteria(-900, 150, -1300);
+                check('GAP-05 : V_on=-1300 < -1200 → surprotection DETECTEE',
+                    overProtFail.overProtectionPass === false &&
+                    overProtFail.overProtectionMessage.indexOf('SURPROTECTION') !== -1);
+
+                const overProtNone = CalculationEngine.validateProtectionCriteria(-900, 150);
+                check('GAP-05 : V_on absent → message informatif (pas de PASS forcé)',
+                    overProtNone.overProtectionMessage.indexOf('non fourni') !== -1);
+
+                // GAP-04 : Rendement rectifier → P_AC_required
+                const rectGap04 = CalculationEngine.designRectifier(10, 2, 1.1, { rectifierEfficiency: 0.85 });
+                check('GAP-04 : P_AC_required = P_design / η = P × SF / 0.85',
+                    rectGap04.P_AC_required > 0 &&
+                    Math.abs(rectGap04.P_AC_required - rectGap04.recommendedPower / 0.85) < 0.001 &&
+                    rectGap04.rectifierEfficiency === 0.85);
+
+                const rectDefault = CalculationEngine.designRectifier(10, 2, 1.1);
+                check('GAP-04 : η=0.85 par défaut si non fourni',
+                    rectDefault.rectifierEfficiency === 0.85 &&
+                    rectDefault.P_AC_required > rectDefault.recommendedPower);
+
+                // GAP-01 : Courant DNV 3 phases
+                const dnvCurrent = CalculationEngine.requiredCurrentDNV({
+                    S: 1000,
+                    J_init: 10, J_moy: 12, J_final: 20,
+                    eps_init: 0.97, eps_moy: 0.85, eps_final: 0.70,
+                    DF: 1.0, k_init: 1.0, k_final: 1.5
+                });
+                check('GAP-01 : I_final > I_initial → sizingBasis = final',
+                    dnvCurrent.sizingBasis === 'final' &&
+                    dnvCurrent.I_final > dnvCurrent.I_initial &&
+                    dnvCurrent.I_design === dnvCurrent.I_final);
+
+                check('GAP-01 : I_design = max(I_initial, I_final)',
+                    dnvCurrent.I_design === Math.max(dnvCurrent.I_initial, dnvCurrent.I_final));
+
+                check('GAP-01 : erreur si surface invalide',
+                    CalculationEngine.requiredCurrentDNV({ S: 0, J_init: 10, J_final: 20 }).error === true);
+
+                const interference = CalculationEngine.analyzeInterference({
+                    acCurrent: 100, acFrequency: 50, acDistance: 100,
+                    acParallel: 1000, acSoilCond: 0.01, pipeDiameter: 610,
+                    dcDistance: 100, dcSoilResistivity: 100,
+                    victimPotInit: -600, victimPotFinal: -850,
+                    J_AC: 2, J_DC: 1
+                });
+                check('Interference conserve le diametre en mm',
+                    interference.J_AC === 2 && interference.J_DC === 1 &&
+                    interference.units.J_AC === 'A/m²' &&
+                    Number.isFinite(interference.acInduced));
+                check('Interference retient le statut le plus severe',
+                    interference.acStatus === 'Action corrective obligatoire'
+                    ? interference.globalStatus.indexOf('ACTION OBLIGATOIRE') !== -1
+                    : true);
+
+                const acMissing = ACCorrosionEngine.analyze({ touchV: 0 });
+                check('AC sans densites reste non evaluable',
+                    acMissing.assessmentStatus === 'NOT_ASSESSABLE' &&
+                    acMissing.isCompliant === false &&
+                    acMissing.J_AC === null &&
+                    acMissing.J_DC === null &&
+                    acMissing.ratio === null &&
+                    acMissing.riskLevel === 'NOT_ASSESSABLE');
+
+                const acZeroRatio = ACCorrosionEngine.analyze({ J_AC: 0, J_DC: 0, touchV: 0 });
+                check('AC ratio 0/0 reste N/A',
+                    acZeroRatio.ratio === null && acZeroRatio.ratioStatus === 'N/A');
+
+                const acMissingTouch = ACCorrosionEngine.analyze({ J_AC: 1, J_DC: 1 });
+                check('AC sans tension de contact reste non evaluable',
+                    acMissingTouch.assessmentStatus === 'NOT_ASSESSABLE' &&
+                    acMissingTouch.dataQuality.hasTouchMeasurement === false &&
+                    acMissingTouch.dataQuality.warnings.length > 0);
+
+                const acModerate = ACCorrosionEngine.analyze({ J_AC: 5, J_DC: 2, touchV: 10 });
+                check('AC ratio modere de reference',
+                    closeEnough(acModerate.ratio, 2.5, 1e-12) &&
+                    acModerate.ratioLevel === 'MODERATE' &&
+                    acModerate.assessmentStatus === 'ASSESSABLE');
+
+                const acSevere = ACCorrosionEngine.analyze({ J_AC: 10, J_DC: 5, touchV: 40 });
+                check('AC densite et contact eleves',
+                    acSevere.riskLevel === 'HIGH' &&
+                    acSevere.touchZone === 'ZONE_3' &&
+                    acSevere.jACLevel === 'HIGH');
+
+                const acTouch = ACCorrosionEngine.analyze({ J_AC: 1, J_DC: 1, touchV: 60 });
+                check('AC zone de contact dangereuse', acTouch.touchZone === 'ZONE_4');
+
+                const iccp = CalculationEngine.designICCPAdvanced({
+                    S: 1000, J: 5, rho: 100, N: 4, L: 1.5, d: 0.075,
+                    spacing: 10, agingFactor: 1.2,
+                    cableResistance: 0.1, structResistance: 0.02,
+                    distanceAnodeStruct: 10, anodeType: 'mmo',
+                    totalDepth: 200, boreholeDiameter: 300, activeDepth: 6,
+                    desiredLife: 25, I_total_override: 10
+                });
+                check('ICCP conserve le courant de conception',
+                    closeEnough(iccp.currentTotal, 10, 1e-12) &&
+                    closeEnough(iccp.rectifierCurrent, 10, 1e-12));
+                check('ICCP puissance de conception basee sur le point initial',
+                    closeEnough(iccp.powerDesign, iccp.powerInitial * iccp.safetyFactorPower, 1e-12) &&
+                    closeEnough(iccp.rectifierPower, iccp.powerDesign, 1e-12));
+                check('ICCP duree theorique non validee reste indisponible',
+                    iccp.lifeTheoretical === null &&
+                    iccp.lifeValidationStatus === 'NOT_VALIDATED_MANUFACTURER_DATA_REQUIRED' &&
+                    iccp.lifeDesign === 25);
+
+                const configuredLife = CalculationEngine.designICCPAdvanced({
+                    S: 1000, J: 5, rho: 100, N: 4, L: 1.5, d: 0.075,
+                    spacing: 10, agingFactor: 1.2,
+                    cableResistance: 0.1, structResistance: 0.02,
+                    distanceAnodeStruct: 10, anodeType: 'mmo',
+                    totalDepth: 200, boreholeDiameter: 300, activeDepth: 6,
+                    desiredLife: 25, I_total_override: 10,
+                    massPerAnode: 50, utilization: 0.5, designLifeCap: 10
+                });
+                check('ICCP utilise la configuration de duree de vie',
+                    configuredLife.lifeDetails.massPerAnode_kg === 50 &&
+                    configuredLife.lifeDetails.utilization === 0.5 &&
+                    configuredLife.lifeDesign <= 10);
+
+                let invalidIccpRejected = false;
+                try {
+                    CalculationEngine.designICCPAdvanced({
+                        S: 1000, J: 5, rho: 100, N: 4, L: 1.5, d: 0.075,
+                        spacing: 10, agingFactor: 1.2, cableResistance: 0.1,
+                        structResistance: 0.02, distanceAnodeStruct: 10,
+                        anodeType: 'unknown', totalDepth: 200,
+                        boreholeDiameter: 300, activeDepth: 6,
+                        desiredLife: 25, I_total_override: 10
+                    });
+                } catch (error) {
+                    invalidIccpRejected = true;
+                }
+                check('ICCP refuse un type d anode inconnu', invalidIccpRejected);
+
+                let invalidIccpGeometryRejected = false;
+                try {
+                    CalculationEngine.designICCPAdvanced({
+                        S: 1000, J: 5, rho: 100, N: 0, L: 1.5, d: 0.075,
+                        spacing: 10, agingFactor: 1.2, cableResistance: 0.1,
+                        structResistance: 0.02, distanceAnodeStruct: 10,
+                        anodeType: 'mmo', totalDepth: 200,
+                        boreholeDiameter: 300, activeDepth: 6,
+                        desiredLife: 25, I_total_override: 10
+                    });
+                } catch (error) {
+                    invalidIccpGeometryRejected = true;
+                }
+                check('ICCP refuse une geometrie invalide', invalidIccpGeometryRejected);
+
+                const sacp = CalculationEngine.designAnodesDNV({
+                    I_req: 10, life: 25, materialKey: 'Mg_HC', u: 0.55,
+                    safety: 1.1, unitMass: 10, rho: 100, L: 1, d: 0.1,
+                    anodePot: -1700, targetProtection: -850, finalFactor: 1.5
+                });
+                check('SACP dimensionne courant et masse',
+                    sacp.error !== true && sacp.count > 0 &&
+                    sacp.currentOk === true && sacp.actualLife > 0);
+
+                const invalidSacp = CalculationEngine.designAnodesDNV({
+                    I_req: 0, life: 25, materialKey: 'Mg_HC', u: 0.55,
+                    safety: 1.1, unitMass: 10, rho: 100, L: 1, d: 0.1,
+                    anodePot: -1700, targetProtection: -850, finalFactor: 1.5
+                });
+                check('SACP refuse un courant nul', invalidSacp.error === true);
+
+                const cable = CableLengthEngine.calculateSection(10, 100, 3, 'cu');
+                check('Cable section commerciale et chute de tension',
+                    cable.selectedMm2 === 16 &&
+                    cable.actualDropV <= 3 &&
+                    cable.withinVoltageDrop === true &&
+                    closeEnough(cable.theoreticalMm2, 11.666666666666666, 1e-12));
+
+                const oversizedCable = CableLengthEngine.calculateSection(1000, 1000, 1, 'cu');
+                check('Cable signale la limite commerciale insuffisante',
+                    oversizedCable.selectedMm2 === 1000 &&
+                    oversizedCable.withinVoltageDrop === false &&
+                    oversizedCable.status === 'LIMIT_EXCEEDED');
+                check('Cable refuse un materiau inconnu',
+                    CableLengthEngine.calculateSection(10, 100, 3, 'acier') === null);
+
+                const micLow = MICEngine.analyzeSRB({
+                    sulfates: 0, sulfides: 0, redox: 200, ph: 7,
+                    temperature: 15, humidity: 30, organicMatter: 0,
+                    nitrates: 100, chlorides: 100
+                });
+                check('MIC classe un environnement faible',
+                    micLow.classification === 'LOW' &&
+                    micLow.targetPotential === -850 &&
+                    micLow.monitoring.samplingFrequency === 'Annuelle');
+
+                const micSevere = MICEngine.analyzeSRB({
+                    sulfates: 1500, sulfides: 2, redox: -150, ph: 7,
+                    temperature: 25, humidity: 90, organicMatter: 6,
+                    nitrates: 0, chlorides: 6000
+                });
+                check('MIC renforce la protection en risque severe',
+                    micSevere.classification === 'SEVERE' &&
+                    micSevere.targetPotential === -950 &&
+                    micSevere.monitoring.biocideRecommended === true &&
+                    micSevere.monitoring.samplingFrequency === 'Mensuelle');
+
+                const micMissing = MICEngine.analyzeSRB({ sulfates: 0, ph: 7 });
+                check('MIC incomplet reste non evaluable',
+                    micMissing.assessmentStatus === 'NOT_ASSESSABLE');
+
+                const rectifier = CalculationEngine.designRectifier(10, 2, 1.15, { backEmfVoltage: 2 });
+                check('Redresseur applique la marge une seule fois',
+                    closeEnough(rectifier.recommendedCurrent, rectifier.current, 1e-12) &&
+                    closeEnough(rectifier.recommendedVoltage, rectifier.voltage, 1e-12) &&
+                    closeEnough(rectifier.recommendedPower, rectifier.power * 1.15, 1e-12));
+
+                const pipeline = {
+                    id: 'TEST-PIPE',
+                    coordinates: [
+                        { lat: 30, lon: 8 },
+                        { lat: 30.01, lon: 8 }
+                    ],
+                    diameter_m: 0.6,
+                    coatingEfficiency: 0.95,
+                    defectDensity: 0.05,
+                    agingFactor: 1.2,
+                    currentDensity: 10,
+                    wallThickness_m: 0.008
+                };
+                const demand = ICCPOptimizationEngine._computeCurrentDemand(pipeline);
+                const alpha = ICCPOptimizationEngine._computeAttenuationConstant(pipeline, 100);
+                const nearCurrent = ICCPOptimizationEngine._currentAtDistance(10, alpha, 0);
+                const farCurrent = ICCPOptimizationEngine._currentAtDistance(10, alpha, 1000);
+                const score = ICCPOptimizationEngine._computeScore(
+                    { lat: 30, lon: 8 }, { lat: 30.02, lon: 8.02 }, [pipeline]
+                );
+                check('Optimiseur ICCP calcule une demande positive', demand > 0);
+                check('Optimiseur ICCP attenue le courant avec la distance',
+                    alpha > 0 && nearCurrent === 10 && farCurrent < nearCurrent);
+                check('Score optimiseur ICCP borne', score >= 0 && score <= 1);
+
+                const correctedPotential = CalculationEngine.correctPotentialForTemperature(
+                    -850, 20, 'CuCuSO4'
+                );
+                check('Correction temperature electrode respecte 25 C',
+                    closeEnough(correctedPotential, -847.5, 1e-12));
+
+                const invalidRectifier = CalculationEngine.designRectifier(0, 2, 1.15);
+                check('Redresseur refuse un courant nul',
+                    invalidRectifier.error && invalidRectifier.power === 0);
+
+                const units = CalculationEngine.UnitConverter;
+                check('Conversions d unites aller-retour',
+                    closeEnough(units.mmToM(75), 0.075, 1e-12) &&
+                    closeEnough(units.mToMm(0.075), 75, 1e-12) &&
+                    closeEnough(units.mAtoA(250), 0.25, 1e-12) &&
+                    closeEnough(units.AtoMa(0.25), 250, 1e-12));
+
+                const invalidProfile = CalculationEngine.computePotentialProfile(null, {});
+                check('Profil potentiel refuse les parametres insuffisants',
+                    invalidProfile.error === 'Paramètres insuffisants');
+
+                window.CoordSystem = {
+                    pipelineLength: points => points.length > 1 ? 1000 : 0
+                };
+                const profile = CalculationEngine.computePotentialProfile({
+                    coordinates: [{ lat: 30, lon: 8 }, { lat: 30.01, lon: 8 }]
+                }, { I0: 10, alpha: 0.001, E_protection: -850 });
+                check('Profil potentiel produit une estimation finie',
+                    profile.error === undefined &&
+                    profile.points.length > 0 &&
+                    Number.isFinite(profile.min) &&
+                    Number.isFinite(profile.max) &&
+                    profile.criticalPoint !== null);
+
+                const invalidPeabody = CalculationEngine.computePotentialProfilePeabody(null, {});
+                check('Profil Peabody refuse les parametres insuffisants',
+                    invalidPeabody.error && invalidPeabody.points.length === 0);
+
+                const peabody = CalculationEngine.computePotentialProfilePeabody({
+                    coordinates: [{ lat: 30, lon: 8 }, { lat: 30.01, lon: 8 }]
+                }, { I0: 10, lambda: 0.001, E_protection: -850, IR_max: 100 });
+                check('Profil Peabody produit une estimation finie',
+                    peabody.error === undefined &&
+                    peabody.points.length > 0 &&
+                    Number.isFinite(peabody.min) &&
+                    Number.isFinite(peabody.max) &&
+                    peabody.criticalPoint !== null);
+
+                // --- Tests GAP-COAT-01 & GAP-COAT-02 : Facteur de degradation revetement ---
+                const coatNorm = CalculationEngine.calculateCoatingDegradationFactor(0.95, 0.05, 1.2);
+                check('Facteur revetement normalise calcul conforme',
+                    closeEnough(coatNorm.f_c, 0.003, 1e-12) &&
+                    coatNorm.coatingCapApplied === false &&
+                    coatNorm.f_c_uncapped === coatNorm.f_c);
+
+                const coatCapped = CalculationEngine.calculateCoatingDegradationFactor(0.1, 0.9, 2.0);
+                check('Plafonnement physique f_c <= 1 (ISO 15589-1 §7.3)',
+                    coatCapped.f_c === 1.0 &&
+                    coatCapped.coatingCapApplied === true &&
+                    coatCapped.f_c_uncapped === 1.62);
+
+                const currentCapped = CalculationEngine.requiredCurrent(100, 5, 0.1, 0.9, 2.0);
+                check('requiredCurrent applique le plafonnement f_c <= 1',
+                    currentCapped.f_c === 1.0 &&
+                    currentCapped.coatingCapApplied === true &&
+                    closeEnough(currentCapped.exposedArea, 100, 1e-12) &&
+                    closeEnough(currentCapped.currentAmperes, 0.5, 1e-12));
+
+                // --- Test GAP-RESIST-01 : Modele multicouche serie/parallele ---
+                const multiSoil = CalculationEngine.calculateLayeredSoilResistivity([
+                    { rho: 30, depth: 10 },
+                    { rho: 90, depth: 30 }
+                ]);
+                check('Modele multicouche serie/parallele (ISO 15589-1 Annexe A)',
+                    multiSoil.error !== true &&
+                    closeEnough(multiSoil.rho_arithmetic, 75, 1e-12) &&
+                    closeEnough(multiSoil.rho_harmonic, 60, 1e-12) &&
+                    closeEnough(multiSoil.sensitivityRatio, 1.25, 1e-12));
+
+                // --- Test GAP-RECT-01 : Paliers normalises TR (IEC 60146) ---
+                const trNorm = CalculationEngine.designRectifier(10, 2, 1.15, { backEmfVoltage: 2 });
+                check('Selection TR paliers normalises IEC 60146',
+                    trNorm.nominalVoltage === 36 &&
+                    trNorm.nominalCurrent === 15 &&
+                    trNorm.nominalPower === 540 &&
+                    trNorm.trSelectionBasis === 'IEC_60146_NORMALIZED_STEPS');
+
+                // --- Test FIX-2 : Guard doux analyzeInterference sur pipeDiameter invalide ---
+                const interSoft = CalculationEngine.analyzeInterference({ pipeDiameter: 0 });
+                check('analyzeInterference guard doux pipeDiameter (FIX-2)',
+                    interSoft && interSoft.globalStatus === 'NOT ASSESSABLE' && interSoft.modelClassification === 'PREFEASIBILITY');
+
+                // --- Test FIX-6 : totalMassEstimate utilise la masse par anode fournie ---
+                const iccpCustomMass = CalculationEngine.designICCPAdvanced({
+                    S: 1000, J: 5, rho: 100, N: 4, L: 1.5, d: 0.075,
+                    spacing: 10, agingFactor: 1.2, cableResistance: 0.1,
+                    structResistance: 0.02, distanceAnodeStruct: 10,
+                    anodeType: 'mmo', totalDepth: 200, boreholeDiameter: 300,
+                    activeDepth: 6, desiredLife: 25, I_total_override: 10,
+                    massPerAnode: 45
+                });
+                check('ICCP totalMassEstimate utilise massPerAnode (FIX-6)',
+                    iccpCustomMass && iccpCustomMass.totalMassEstimate === 4 * 45);
+
+                // --- Test FIX-10 : ACCorrosionEngine analyse et conformité ---
+                const acRes = ACCorrosionEngine.analyze({
+                    acVoltage: 12, acCurrent: 5, acFrequency: 50,
+                    dcCurrent: 2, pipeDiameter: 0.5, pipeLength: 1000,
+                    coatingRes: 10000, soilResistivity: 50,
+                    J_AC: 6, J_DC: 2, touchVoltage: 25
+                });
+                check('ACCorrosionEngine analyse conforme EN 15280 / IEC 60479 (FIX-10)',
+                    acRes && acRes.assessmentStatus === 'ASSESSABLE' &&
+                    acRes.riskLevel === 'MODERATE' && acRes.touchZone === 'ZONE_2');
+
+                document.getElementById('summary').className = failed ? 'fail' : 'pass';
+                document.getElementById('summary').textContent =
+                    passed + ' tests passes, ' + failed + ' tests en echec';
+                document.getElementById('results').textContent = lines.join('\n');
+                document.title = (failed ? 'FAIL' : 'PASS') + ' - Tests du moteur CP';
+            }
+
+            try {
+                run();
+            } catch (error) {
+                failed += 1;
+                document.getElementById('summary').className = 'fail';
+                document.getElementById('summary').textContent = 'Erreur d execution: ' + error.message;
+                document.getElementById('results').textContent = error.stack || String(error);
+            }
+        }());
+    </script>
+</body>
+</html>

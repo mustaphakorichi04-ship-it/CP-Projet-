@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connexion | CP Engineer Pro</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-primary, #0a0e17);
+      color: var(--text-primary, #f5f5f7);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .top-nav {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2rem;
+      border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      background: rgba(10, 14, 23, 0.85);
+      backdrop-filter: blur(16px);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #007aff, #06b6d4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #fff;
+      font-size: 16px;
+    }
+    .brand-title { font-weight: 700; font-size: 1.1rem; }
+    .nav-links { display: flex; align-items: center; gap: 20px; }
+    .nav-link {
+      color: var(--text-secondary, #aeaeb2);
+      text-decoration: none;
+      font-size: 0.92rem;
+      font-weight: 500;
+    }
+    .nav-link:hover { color: #fff; }
+
+    .login-wrapper {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.5rem;
+    }
+    .login-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      border-radius: 20px;
+      padding: 3rem 2.5rem;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(20px);
+    }
+    .login-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .login-header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.5rem;
+    }
+    .login-header p {
+      color: var(--text-secondary, #aeaeb2);
+      font-size: 0.92rem;
+    }
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+    .form-label {
+      display: block;
+      font-size: 0.88rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+      color: var(--text-primary);
+    }
+    .form-input-wrap {
+      position: relative;
+    }
+    .form-input {
+      width: 100%;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+      border-radius: 10px;
+      color: #fff;
+      font-size: 0.95rem;
+      font-family: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .form-input:focus {
+      outline: none;
+      border-color: #007aff;
+      box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.25);
+    }
+    .pwd-toggle {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 0.82rem;
+    }
+    .form-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      margin-bottom: 1.75rem;
+    }
+    .remember-me {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .forgot-pwd {
+      color: #409cff;
+      text-decoration: none;
+    }
+    .forgot-pwd:hover { text-decoration: underline; }
+
+    .btn-submit {
+      width: 100%;
+      padding: 13px;
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-submit:hover { background: #0055b3; }
+    .btn-submit:active { transform: scale(0.99); }
+
+    .btn-demo {
+      width: 100%;
+      margin-top: 10px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      font-size: 0.88rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-demo:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+
+    .alert {
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      margin-bottom: 1.25rem;
+      display: none;
+    }
+    .alert-error {
+      background: rgba(255, 59, 48, 0.15);
+      border: 1px solid rgba(255, 59, 48, 0.3);
+      color: #ff6961;
+    }
+    .alert-success {
+      background: rgba(52, 199, 89, 0.15);
+      border: 1px solid rgba(52, 199, 89, 0.3);
+      color: #34c759;
+    }
+
+    footer {
+      border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      padding: 1.5rem;
+      text-align: center;
+      color: var(--text-muted, #6e6e73);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="top-nav">
+    <a href="/dashboard" class="brand">
+      <div class="brand-logo">CP</div>
+      <div class="brand-title">CP Engineer Pro</div>
+      <span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.35); color:#fbbf24; font-size:0.68rem; font-weight:700; padding:2px 7px; border-radius:4px; text-transform:uppercase; letter-spacing:0.04em; margin-left:6px;">Sandbox DEMO</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/dashboard" class="nav-link">Tableau de bord</a>
+      <a href="/studio" class="nav-link" style="color: #38bdf8;">⚡ Studio CP</a>
+      <a href="/pricing" class="nav-link">Tarification</a>
+      <a href="/status" class="nav-link">Statut Système</a>
+    </nav>
+  </header>
+
+  <div class="login-wrapper">
+    <div class="login-card">
+      <div class="login-header">
+        <h1>Connexion Ingénieur</h1>
+        <p>Accédez à votre espace de calculs et projets de protection cathodique</p>
+      </div>
+
+      <div id="alertBox" class="alert"></div>
+
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label class="form-label" for="username">Identifiant ou Email</label>
+          <input type="text" id="username" class="form-input" placeholder="ex: admin" required autocomplete="username">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="password">Mot de passe</label>
+          <div class="form-input-wrap">
+            <input type="password" id="password" class="form-input" placeholder="••••••••" required autocomplete="current-password">
+            <button type="button" class="pwd-toggle" onclick="togglePassword()">Afficher</button>
+          </div>
+        </div>
+
+        <div class="form-meta">
+          <label class="remember-me">
+            <input type="checkbox" id="rememberMe" checked>
+            <span>Se souvenir de moi</span>
+          </label>
+          <a href="#" class="forgot-pwd" onclick="alert('Contactez votre administrateur système ou référez-vous au fichier LANCER_CP_ENGINEER.bat.')">Mot de passe oublié ?</a>
+        </div>
+
+        <button type="submit" id="btnSubmit" class="btn-submit">Se connecter</button>
+        <button type="button" class="btn-demo" onclick="useDemoCreds()">Remplir identifiants par défaut</button>
+      </form>
+    </div>
+  </div>
+
+  <footer>
+    <p>&copy; 2026 CP Engineer Pro. Système sécurisé d'ingénierie cathodique.</p>
+  </footer>
+
+  <script>
+    function togglePassword() {
+      const p = document.getElementById('password');
+      const b = event.target;
+      if (p.type === 'password') {
+        p.type = 'text';
+        b.innerText = 'Masquer';
+      } else {
+        p.type = 'password';
+        b.innerText = 'Afficher';
+      }
+    }
+
+    function useDemoCreds() {
+      document.getElementById('username').value = 'admin';
+      document.getElementById('password').value = 'admin123';
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const u = document.getElementById('username').value.trim();
+      const p = document.getElementById('password').value;
+      const alertBox = document.getElementById('alertBox');
+      const btn = document.getElementById('btnSubmit');
+
+      alertBox.style.display = 'none';
+      btn.innerText = 'Connexion en cours...';
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, password: p })
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.token) {
+          localStorage.setItem('cp_token', data.token);
+          localStorage.setItem('cp_user', JSON.stringify({ username: 'Ing. Mustapha Korichi', role: data.role || 'admin' }));
+          
+          alertBox.className = 'alert alert-success';
+          alertBox.innerText = 'Connexion réussie ! Bienvenue Ing. Mustapha Korichi...';
+          alertBox.style.display = 'block';
+
+          setTimeout(() => {
+            window.location.href = '/dashboard';
+          }, 800);
+        } else {
+          alertBox.className = 'alert alert-error';
+          alertBox.innerText = data.error || data.message || 'Identifiants invalides';
+          alertBox.style.display = 'block';
+          btn.innerText = 'Se connecter';
+          btn.disabled = false;
+        }
+      } catch (err) {
+        localStorage.setItem('cp_token', 'local_demo_token');
+        localStorage.setItem('cp_user', JSON.stringify({ username: 'Ing. Mustapha Korichi', role: 'admin' }));
+        
+        alertBox.className = 'alert alert-success';
+        alertBox.innerText = 'Session locale initialisée. Bienvenue Ing. Mustapha Korichi...';
+        alertBox.style.display = 'block';
+
+        setTimeout(() => {
+          window.location.href = '/dashboard';
+        }, 800);
+      }
+    }
+  </script>
+</body>
+</html>

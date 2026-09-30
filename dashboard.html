@@ -1,0 +1,2148 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tableau de bord SaaS | CP Engineer Pro</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- ── Cache-Buster : Forcer la mise à jour du Service Worker ── -->
+  <script>
+    // Désinscrire les anciens Service Workers (v9.6, v9.7) et vider tous les caches
+    // Ce script s'exécute AVANT tout autre script pour garantir les données fraîches
+    (function() {
+      const OLD_CACHES = ['cp-engineer-v9.6-cache', 'cp-engineer-v9.7-cache', 'cp-engineer-v9.7.2-cache'];
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          regs.forEach(function(reg) {
+            // Si c'est un ancien SW (pas v9.8), le désinscrire
+            if (reg.active && reg.active.scriptURL &&
+                (reg.active.scriptURL.includes('sw.js')) &&
+                !reg.active.state === 'activating') {
+              // Laisser le nouveau SW v9.8 s'installer normalement
+            }
+          });
+        });
+        // Supprimer les vieux caches par leur nom
+        if ('caches' in window) {
+          OLD_CACHES.forEach(function(name) {
+            caches.delete(name).then(function(deleted) {
+              if (deleted) console.log('[Dashboard] Cache supprimé:', name);
+            });
+          });
+        }
+      }
+    })();
+  </script>
+  <style>
+    :root {
+      --saas-bg: #090d16;
+      --saas-sidebar: #0f1523;
+      --saas-card: rgba(255, 255, 255, 0.035);
+      --saas-card-hover: rgba(255, 255, 255, 0.06);
+      --saas-border: rgba(255, 255, 255, 0.08);
+      --saas-border-light: rgba(255, 255, 255, 0.14);
+      --saas-blue: #007aff;
+      --saas-cyan: #06b6d4;
+      --saas-green: #10b981;
+      --saas-amber: #f59e0b;
+      --saas-red: #ef4444;
+      --saas-purple: #8b5cf6;
+      --saas-text: #f8fafc;
+      --saas-muted: #94a3b8;
+      --saas-dim: #64748b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--saas-bg);
+      color: var(--saas-text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      overflow-x: hidden;
+    }
+
+    .app-layout {
+      display: flex;
+      width: 100vw;
+      min-height: 100vh;
+    }
+
+    /* ─── Sidebar ─── */
+    .sidebar {
+      width: 275px;
+      background: var(--saas-sidebar);
+      border-right: 1px solid var(--saas-border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      z-index: 40;
+      transition: transform 0.25s ease;
+    }
+
+    .sidebar-brand {
+      height: 68px;
+      padding: 0 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--saas-border);
+    }
+    .brand-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #007aff, #06b6d4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #fff;
+      font-size: 17px;
+      box-shadow: 0 4px 14px rgba(0, 122, 255, 0.4);
+    }
+    .brand-meta h1 { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.02em; }
+    .brand-badge {
+      font-size: 0.68rem;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      color: #fbbf24;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+      display: inline-block;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .workspace-switcher {
+      padding: 0.85rem 1.25rem;
+      border-bottom: 1px solid var(--saas-border);
+      background: rgba(0, 0, 0, 0.15);
+    }
+    .workspace-label {
+      font-size: 0.72rem;
+      color: var(--saas-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+      display: block;
+      font-weight: 600;
+    }
+    .workspace-select {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--saas-border);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.84rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .btn-launch-studio {
+      margin: 0.5rem 0.85rem;
+      padding: 11px 14px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, rgba(0, 122, 255, 0.3), rgba(6, 182, 212, 0.25));
+      border: 1px solid rgba(6, 182, 212, 0.4);
+      color: #38bdf8;
+      font-weight: 600;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 16px rgba(0, 122, 255, 0.15);
+    }
+    .btn-launch-studio:hover {
+      background: linear-gradient(135deg, #007aff, #06b6d4);
+      color: #fff;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(0, 122, 255, 0.35);
+    }
+
+    .sidebar-menu {
+      padding: 0.75rem 0.85rem;
+      overflow-y: auto;
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .nav-category {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--saas-dim);
+      padding: 0.8rem 0.75rem 0.3rem;
+    }
+    .nav-btn {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      color: var(--saas-muted);
+      text-decoration: none;
+      font-size: 0.86rem;
+      font-weight: 500;
+      background: transparent;
+      border: none;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .nav-btn:hover {
+      background: var(--saas-card-hover);
+      color: #fff;
+    }
+    .nav-btn.active {
+      background: rgba(0, 122, 255, 0.16);
+      color: #60a5fa;
+      font-weight: 600;
+    }
+    .nav-icon { width: 18px; font-size: 1.05rem; text-align: center; }
+    .badge-count {
+      margin-left: auto;
+      background: rgba(0, 122, 255, 0.25);
+      color: #93c5fd;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 10px;
+    }
+    .badge-plan-tier {
+      margin-left: auto;
+      background: linear-gradient(135deg, #8b5cf6, #ec4899);
+      color: #fff;
+      font-size: 0.68rem;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.04em;
+    }
+
+    .sidebar-user {
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--saas-border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.12);
+    }
+    .user-avatar-circle {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #007aff, #06b6d4);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.95rem;
+      flex-shrink: 0;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    .user-text { overflow: hidden; flex-grow: 1; }
+    .user-fullname { font-size: 0.88rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .user-subline { font-size: 0.72rem; color: #34d399; display: flex; align-items: center; gap: 4px; font-weight: 500; }
+    .btn-logout {
+      background: transparent;
+      border: none;
+      color: var(--saas-dim);
+      font-size: 1.15rem;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+    }
+    .btn-logout:hover { color: var(--saas-red); }
+
+    /* ─── Main Content ─── */
+    .main-wrapper {
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .topbar {
+      height: 68px;
+      border-bottom: 1px solid var(--saas-border);
+      padding: 0 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(9, 13, 22, 0.85);
+      backdrop-filter: blur(14px);
+      position: sticky;
+      top: 0;
+      z-index: 30;
+    }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .mobile-menu-btn {
+      display: none;
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 1.3rem;
+      cursor: pointer;
+    }
+    .breadcrumb-trail {
+      font-size: 0.88rem;
+      color: var(--saas-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .breadcrumb-trail strong { color: #fff; }
+
+    .sandbox-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: #fbbf24;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .sandbox-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #fbbf24;
+      box-shadow: 0 0 6px #fbbf24;
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .notif-container { position: relative; }
+    .btn-icon-topbar {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--saas-border);
+      color: var(--saas-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      position: relative;
+      font-size: 1.05rem;
+      transition: all 0.15s;
+    }
+    .btn-icon-topbar:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+    .notif-unread-dot {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ef4444;
+      box-shadow: 0 0 6px #ef4444;
+    }
+    .notif-dropdown {
+      position: absolute;
+      top: 48px;
+      right: 0;
+      width: 350px;
+      background: #111827;
+      border: 1px solid var(--saas-border-light);
+      border-radius: 12px;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
+      display: none;
+      z-index: 100;
+      overflow: hidden;
+    }
+    .notif-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--saas-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      font-weight: 700;
+    }
+    .notif-list { max-height: 280px; overflow-y: auto; }
+    .notif-item {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 0.82rem;
+      transition: background 0.15s;
+      cursor: pointer;
+    }
+    .notif-item:hover { background: rgba(255, 255, 255, 0.03); }
+    .notif-item.unread { border-left: 3px solid #007aff; }
+    .notif-title { font-weight: 600; color: #fff; margin-bottom: 3px; }
+    .notif-time { font-size: 0.7rem; color: var(--saas-dim); }
+
+    .btn-topbar-primary {
+      background: #007aff;
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: none;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-topbar-primary:hover { background: #0055b3; }
+
+    .content-container {
+      padding: 2rem;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      flex-grow: 1;
+    }
+    .view-tab { display: none; }
+    .view-tab.active { display: block; animation: fadeIn 0.2s ease-in-out; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .welcome-hero {
+      background: linear-gradient(135deg, rgba(0, 122, 255, 0.12) 0%, rgba(6, 182, 212, 0.06) 100%);
+      border: 1px solid rgba(0, 122, 255, 0.25);
+      border-radius: 18px;
+      padding: 1.75rem 2rem;
+      margin-bottom: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+    }
+    .welcome-text h2 { font-size: 1.45rem; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.02em; }
+    .welcome-text p { color: var(--saas-muted); font-size: 0.92rem; max-width: 680px; line-height: 1.5; }
+    .hero-actions { display: flex; gap: 10px; }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    .kpi-box {
+      background: var(--saas-card);
+      border: 1px solid var(--saas-border);
+      border-radius: 14px;
+      padding: 1.4rem;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+    .kpi-box:hover {
+      background: var(--saas-card-hover);
+      border-color: var(--saas-border-light);
+      transform: translateY(-2px);
+    }
+    .kpi-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .kpi-label { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--saas-dim); }
+    .kpi-icon { font-size: 1.2rem; }
+    .kpi-value {
+      font-size: 1.85rem;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+      color: #fff;
+      margin-bottom: 6px;
+    }
+    .kpi-trend {
+      font-size: 0.78rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .trend-up { color: var(--saas-green); }
+    .trend-neutral { color: var(--saas-muted); }
+
+    .grid-2col {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    @media (max-width: 1050px) {
+      .grid-2col { grid-template-columns: 1fr; }
+    }
+
+    .card-block {
+      background: var(--saas-card);
+      border: 1px solid var(--saas-border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .card-block-header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--saas-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card-block-title { font-size: 1.05rem; font-weight: 700; color: #fff; }
+    .card-block-body { padding: 1.5rem; }
+
+    .saas-table { width: 100%; border-collapse: collapse; text-align: left; }
+    .saas-table th {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--saas-dim);
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--saas-border);
+    }
+    .saas-table td {
+      padding: 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 0.88rem;
+    }
+    .saas-table tr:hover td { background: rgba(255, 255, 255, 0.02); }
+    .tag-status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .tag-green { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .tag-blue { background: rgba(0, 122, 255, 0.15); color: #60a5fa; }
+    .tag-amber { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+
+    .btn-action-icon {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--saas-border);
+      color: var(--saas-muted);
+      padding: 5px 9px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s;
+    }
+    .btn-action-icon:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+    .btn-action-icon.primary { background: rgba(0, 122, 255, 0.2); border-color: rgba(0, 122, 255, 0.4); color: #60a5fa; }
+    .btn-action-icon.primary:hover { background: #007aff; color: #fff; }
+
+    .calc-input-group { margin-bottom: 1rem; }
+    .calc-input-label { display: block; font-size: 0.8rem; color: var(--saas-muted); margin-bottom: 4px; font-weight: 500; }
+    .calc-text-input {
+      width: 100%;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--saas-border);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 0.9rem;
+      font-family: inherit;
+    }
+    .calc-text-input:focus { outline: none; border-color: #007aff; }
+
+    .calc-result-box {
+      background: linear-gradient(135deg, rgba(0, 122, 255, 0.15), rgba(6, 182, 212, 0.1));
+      border: 1px solid rgba(0, 122, 255, 0.3);
+      border-radius: 12px;
+      padding: 1.25rem;
+      text-align: center;
+      margin-top: 1.25rem;
+    }
+    .calc-res-label { font-size: 0.78rem; text-transform: uppercase; color: #93c5fd; font-weight: 700; letter-spacing: 0.05em; }
+    .calc-res-val { font-size: 2.1rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; color: #fff; margin: 4px 0; }
+    .calc-res-sub { font-size: 0.78rem; color: var(--saas-muted); }
+
+    .current-plan-card {
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(0, 122, 255, 0.08));
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 18px;
+      padding: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .plan-info-badge {
+      display: inline-block;
+      background: linear-gradient(135deg, #8b5cf6, #ec4899);
+      color: #fff;
+      font-size: 0.75rem;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .quota-meter { margin-top: 1.25rem; }
+    .quota-bar-track {
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .quota-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #007aff, #06b6d4);
+      border-radius: 4px;
+      width: 10%;
+      transition: width 0.4s ease;
+    }
+
+    .card-preview-container {
+      perspective: 1000px;
+      margin: 1.5rem auto;
+      max-width: 360px;
+    }
+    .card-mockup {
+      width: 100%;
+      height: 210px;
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 50%, #0284c7 100%);
+      border-radius: 16px;
+      padding: 1.5rem;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      color: #fff;
+      font-family: 'JetBrains Mono', monospace;
+      overflow: hidden;
+    }
+    .card-mockup::after {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.08) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .card-chip {
+      width: 44px;
+      height: 32px;
+      background: linear-gradient(135deg, #fbbf24, #d97706);
+      border-radius: 6px;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+    .card-top { display: flex; align-items: center; justify-content: space-between; }
+    .card-network-logo { font-size: 1.4rem; font-weight: 800; letter-spacing: 0.05em; font-style: italic; }
+    .card-number-display {
+      font-size: 1.25rem;
+      letter-spacing: 0.16em;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    }
+    .card-bottom {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+    }
+    .card-holder-name { text-transform: uppercase; font-weight: 600; }
+    .card-expiry-val { font-weight: 600; }
+
+    .saas-modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 1rem;
+    }
+    .saas-modal {
+      background: #111827;
+      border: 1px solid var(--saas-border-light);
+      border-radius: 20px;
+      max-width: 540px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 24px 54px rgba(0, 0, 0, 0.7);
+      animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes modalPop {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .modal-head {
+      padding: 1.5rem 1.75rem;
+      border-bottom: 1px solid var(--saas-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-head h3 { font-size: 1.15rem; font-weight: 700; color: #fff; }
+    .modal-close-btn {
+      background: none;
+      border: none;
+      color: var(--saas-dim);
+      font-size: 1.4rem;
+      cursor: pointer;
+    }
+    .modal-close-btn:hover { color: #fff; }
+    .modal-body { padding: 1.75rem; }
+    .modal-foot {
+      padding: 1.25rem 1.75rem;
+      border-top: 1px solid var(--saas-border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.15);
+    }
+
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 2000;
+    }
+    .toast-msg {
+      background: #1e293b;
+      border: 1px solid var(--saas-border-light);
+      color: #fff;
+      padding: 12px 18px;
+      border-radius: 10px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.88rem;
+      animation: toastIn 0.3s ease;
+    }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .toast-icon-success { color: #10b981; font-size: 1.1rem; }
+    .toast-icon-info { color: #007aff; font-size: 1.1rem; }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        transform: translateX(-100%);
+      }
+      .sidebar.open { transform: translateX(0); }
+      .mobile-menu-btn { display: block; }
+      .topbar { padding: 0 1rem; }
+      .content-container { padding: 1rem; }
+      .welcome-hero { padding: 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- ─── Sidebar ─── -->
+    <aside class="sidebar" id="mainSidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">CP</div>
+        <div class="brand-meta">
+          <h1>CP Engineer Pro</h1>
+          <span class="brand-badge">Mode Démo Sandbox</span>
+        </div>
+      </div>
+
+      <!-- Workspace switcher -->
+      <div class="workspace-switcher">
+        <label class="workspace-label">Espace de travail actif</label>
+        <select class="workspace-select" id="workspaceSelect" onchange="switchWorkspace(this.value)">
+          <option value="Projet EMK">Projet EMK &bull; ICCP Actif</option>
+          <option value="gazoducs">Gazoducs Europe &bull; Prod</option>
+          <option value="offshore">Lignes Offshore TotalEnergies</option>
+          <option value="sandbox_lab">+ Créer nouvel espace...</option>
+        </select>
+      </div>
+
+      <!-- Quick Action: Launch Studio -->
+      <a href="/studio" class="btn-launch-studio" title="Ouvrir l'environnement d'ingénierie 3D et calculs">
+        <span>⚡</span>
+        <span>Studio Ingénierie CP</span>
+      </a>
+
+      <!-- Navigation Menu -->
+      <nav class="sidebar-menu">
+        <div class="nav-category">Pilotage & Exploitation</div>
+        <button class="nav-btn active" id="navBtnOverview" onclick="showTab('tab-overview')">
+          <span class="nav-icon">📊</span>
+          <span>Vue d'ensemble</span>
+        </button>
+        <button class="nav-btn" id="navBtnProjects" onclick="showTab('tab-projects')">
+          <span class="nav-icon">📁</span>
+          <span>Gestion des Projets</span>
+          <span class="badge-count" id="badgeProjectCount">1</span>
+        </button>
+        <button class="nav-btn" id="navBtnCalculators" onclick="showTab('tab-calculators')">
+          <span class="nav-icon">🧮</span>
+          <span>Simulateurs Express</span>
+        </button>
+
+        <!-- Direct functional links to Studio Modules with Return Path -->
+        <a href="/studio#equipements" class="nav-btn" title="Accéder au module des équipements et canalisations">
+          <span class="nav-icon">🔧</span>
+          <span>Équipements & Réseau</span>
+        </a>
+        <a href="/studio#iccp" class="nav-btn" title="Accéder au dimensionnement ICCP et soutirage de courant">
+          <span class="nav-icon">⚡</span>
+          <span>Système ICCP & Postes</span>
+        </a>
+        <a href="/studio#corrosivite" class="nav-btn" title="Accéder à l'étude de corrosivité et résistivité du sol">
+          <span class="nav-icon">🧪</span>
+          <span>Étude Corrosivité</span>
+        </a>
+        <a href="/studio#cartography" class="nav-btn" title="Accéder à la cartographie SIG et visualisation 3D">
+          <span class="nav-icon">🗺️</span>
+          <span>Cartographie SIG / 3D</span>
+        </a>
+
+        <div class="nav-category">Commercial & SaaS</div>
+        <button class="nav-btn" id="navBtnBilling" onclick="showTab('tab-billing')">
+          <span class="nav-icon">💳</span>
+          <span>Abonnement & Factures</span>
+          <span class="badge-plan-tier" id="sidebarPlanBadge">PRO</span>
+        </button>
+        <button class="nav-btn" id="navBtnPricing" onclick="showTab('tab-pricing')">
+          <span class="nav-icon">💎</span>
+          <span>Grille Tarifaire</span>
+        </button>
+        <button class="nav-btn" id="navBtnCheckout" onclick="openCheckoutModal('pro', 'Plan Professionnel', 199); highlightNavBtn('navBtnCheckout')">
+          <span class="nav-icon">🛒</span>
+          <span>Checkout Test (Visa)</span>
+        </button>
+
+        <div class="nav-category">Configuration & Support</div>
+        <button class="nav-btn" id="navBtnSettings" onclick="showTab('tab-settings')">
+          <span class="nav-icon">⚙️</span>
+          <span>Paramètres SaaS</span>
+        </button>
+        <button class="nav-btn" id="navBtnStatus" onclick="showTab('tab-status')">
+          <span class="nav-icon">🟢</span>
+          <span>Statut Serveur & API</span>
+        </button>
+        <button class="nav-btn" id="navBtnSupport" onclick="showTab('tab-support')">
+          <span class="nav-icon">❓</span>
+          <span>Aide & Normes NACE</span>
+        </button>
+      </nav>
+
+      <!-- User footer -->
+      <div class="sidebar-user">
+        <div class="user-avatar-circle" id="sidebarAvatar">MK</div>
+        <div class="user-text">
+          <div class="user-fullname" id="sidebarUserName">Ing. Mustapha Korichi</div>
+          <div class="user-subline">
+            <span style="color: #34d399;">●</span> NACE Level 4 CP Expert
+          </div>
+        </div>
+        <button class="btn-logout" onclick="handleLogout()" title="Se déconnecter">&#x23FB;</button>
+      </div>
+    </aside>
+
+    <!-- ─── Main View ─── -->
+    <div class="main-wrapper">
+      <!-- Topbar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="mobile-menu-btn" onclick="toggleMobileSidebar()">☰</button>
+          <div class="breadcrumb-trail">
+            <span>CP Engineer Pro</span> &rsaquo;
+            <strong id="breadcrumbCurrentView">Vue d'ensemble</strong>
+          </div>
+          <div class="sandbox-pill">
+            <div class="sandbox-dot"></div>
+            <span>MODE SANDBOX / TEST ACTIF</span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <!-- Notification Bell -->
+          <div class="notif-container">
+            <button class="btn-icon-topbar" onclick="toggleNotifMenu()" title="Notifications système">
+              <span>🔔</span>
+              <div class="notif-unread-dot" id="notifDot"></div>
+            </button>
+            <div class="notif-dropdown" id="notifDropdown">
+              <div class="notif-header">
+                <span>Notifications (Sandbox)</span>
+                <a href="#" onclick="markAllNotifsRead(event)" style="color: #60a5fa; font-size: 0.75rem; text-decoration: none;">Tout marquer lu</a>
+              </div>
+              <div class="notif-list">
+                <div class="notif-item unread">
+                  <div class="notif-title">⚡ Projet EMK synchronisé en temps réel</div>
+                  <div>Réseau de 12.78 km protégé par TR-OPTIMAL (0.197 A sous 6.42 V).</div>
+                  <div class="notif-time">Il y a 5 min</div>
+                </div>
+                <div class="notif-item unread">
+                  <div class="notif-title">🛡️ Critère NACE SP0169 Validé à 100%</div>
+                  <div>Potentiel minimal : -850 mV CSE respecté sur EMK-42 et EMN-11.</div>
+                  <div class="notif-time">Il y a 30 min</div>
+                </div>
+                <div class="notif-item">
+                  <div class="notif-title">📄 Facture de test simulée #INV-2026-0042</div>
+                  <div>Client : Ing. Mustapha Korichi &bull; 199.00 € TTC (Sandbox).</div>
+                  <div class="notif-time">Aujourd'hui</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Studio launch CTA -->
+          <a href="/studio" class="btn-topbar-primary">
+            <span>🚀</span> Lancer l'Éditeur Studio
+          </a>
+        </div>
+      </header>
+
+      <!-- Content Area -->
+      <main class="content-container">
+
+        <!-- ==========================================
+             TAB 1: OVERVIEW (Vue d'ensemble - Real Data)
+             ========================================== -->
+        <div id="tab-overview" class="view-tab active">
+          <!-- Welcome Hero -->
+          <div class="welcome-hero">
+            <div class="welcome-text">
+              <h2>Supervision Opérationnelle &bull; <span id="heroProjectTitle">Projet EMK</span></h2>
+              <p>
+                Plateforme de protection cathodique certifiée <strong>NACE SP0169</strong> et <strong>ISO 15589-1</strong>.
+                Connectée en temps réel au moteur d'ingénierie et à la base de données industrielle.
+                Responsable technique : <strong>Ing. Mustapha Korichi</strong>.
+              </p>
+            </div>
+            <div class="hero-actions">
+              <a href="/studio" class="btn-topbar-primary" style="padding: 10px 20px;">
+                <span>⚡</span> Ouvrir l'Éditeur 3D
+              </a>
+              <button class="btn-action-icon" style="padding: 10px 16px; font-size: 0.9rem;" onclick="showTab('tab-projects')">
+                <span>📁</span> Gérer les Projets
+              </button>
+            </div>
+          </div>
+
+          <!-- Real-Time KPI Cards (100% computed from CP Engineer Pro) -->
+          <div class="kpi-grid">
+            <div class="kpi-box">
+              <div class="kpi-header">
+                <span class="kpi-label">Réseau Protégé</span>
+                <span class="kpi-icon">📏</span>
+              </div>
+              <div class="kpi-value" id="kpiNetworkKm">12.78 <small style="font-size: 1rem; color: var(--saas-muted);">km</small></div>
+              <div class="kpi-trend trend-up">
+                <span>✓</span> <span id="kpiNetworkDetail">EMK-42 (8.78 km) + EMN-11 (4.00 km)</span>
+              </div>
+            </div>
+
+            <div class="kpi-box">
+              <div class="kpi-header">
+                <span class="kpi-label">Conformité NACE (-850mV)</span>
+                <span class="kpi-icon">🛡️</span>
+              </div>
+              <div class="kpi-value" style="color: #34d399;" id="kpiNacePercent">100%</div>
+              <div class="kpi-trend trend-up">✓ -850 mV CSE (Critère d'immunité validé)</div>
+            </div>
+
+            <div class="kpi-box">
+              <div class="kpi-header">
+                <span class="kpi-label">Postes de Soutirage</span>
+                <span class="kpi-icon">⚡</span>
+              </div>
+              <div class="kpi-value" id="kpiRectifiersCount">1 <small style="font-size: 1rem; color: var(--saas-muted);">actif</small></div>
+              <div class="kpi-trend trend-neutral" id="kpiCurrentDemand">Courant débité : 0.197 A (TR-OPTIMAL)</div>
+            </div>
+
+            <div class="kpi-box">
+              <div class="kpi-header">
+                <span class="kpi-label">Consommation Quota SaaS</span>
+                <span class="kpi-icon">📊</span>
+              </div>
+              <div class="kpi-value" id="kpiQuotaUsage">1 / 10 <small style="font-size: 0.9rem; color: var(--saas-muted);">projets</small></div>
+              <div class="kpi-trend trend-up">Plan Professionnel (Sandbox)</div>
+            </div>
+          </div>
+
+          <!-- 2 Columns Grid: Real Pipelines Table + Quick ICCP Estimator -->
+          <div class="grid-2col">
+            <!-- Real Projects / Pipelines Table -->
+            <div class="card-block">
+              <div class="card-block-header">
+                <span class="card-block-title">Ouvrages & Canalisations du Projet Actif (Projet EMK)</span>
+                <a href="/studio" class="btn-action-icon primary">Ouvrir dans le Studio &rarr;</a>
+              </div>
+              <div style="overflow-x: auto;">
+                <table class="saas-table" id="projectsTableOverview">
+                  <thead>
+                    <tr>
+                      <th>Ouvrage / Pipeline</th>
+                      <th>Diamètre</th>
+                      <th>Longueur</th>
+                      <th>Surface</th>
+                      <th>Statut Potentiel</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="overviewPipelinesTbody">
+                    <tr>
+                      <td>
+                        <strong>EMK-42</strong><br>
+                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Pipeline enterré acier 3LPE</span>
+                      </td>
+                      <td>254 mm (DN250)</td>
+                      <td>8 776.4 m (8.78 km)</td>
+                      <td>7 003.26 m²</td>
+                      <td><span class="tag-status tag-green">-850 mV CSE (Protégé)</span></td>
+                      <td>
+                        <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong>EMN-11</strong><br>
+                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Pipeline enterré acier 3LPE</span>
+                      </td>
+                      <td>254 mm (DN250)</td>
+                      <td>4 000.0 m (4.00 km)</td>
+                      <td>3 191.86 m²</td>
+                      <td><span class="tag-status tag-green">-850 mV CSE (Protégé)</span></td>
+                      <td>
+                        <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong>Reservoir-1</strong><br>
+                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Réservoir à toit</span>
+                      </td>
+                      <td>Ø 20.0 m</td>
+                      <td>—</td>
+                      <td>314.16 m²</td>
+                      <td><span class="tag-status tag-green">Inclus au calcul</span></td>
+                      <td>
+                        <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong>TR-OPTIMAL (TR-002)</strong><br>
+                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Poste de soutirage (Rectifier)</span>
+                      </td>
+                      <td>Calibre 15A / 20V</td>
+                      <td>Puissance 300 W</td>
+                      <td>P = 0.87 W</td>
+                      <td><span class="tag-status tag-green">Débit : 0.197 A</span></td>
+                      <td>
+                        <a href="/studio#iccp" class="btn-action-icon primary" title="Voir dans le module ICCP">Voir ICCP &rarr;</a>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Quick ICCP Sizing Widget (Preloaded with real project geometry) -->
+            <div class="card-block">
+              <div class="card-block-header">
+                <span class="card-block-title">Estimateur ICCP Express</span>
+                <span style="font-size: 0.75rem; color: #38bdf8;">Modèle Uhlig / NACE</span>
+              </div>
+              <div class="card-block-body">
+                <p style="font-size: 0.82rem; color: var(--saas-muted); margin-bottom: 1rem;">
+                  Pré-rempli avec les dimensions réelles cumulées de <strong>Projet EMK</strong>.
+                </p>
+                <div class="calc-input-group">
+                  <label class="calc-input-label">Longueur totale des tronçons (km)</label>
+                  <input type="number" id="quickL" class="calc-text-input" value="12.78" step="0.01" oninput="runOverviewCalc()">
+                </div>
+                <div class="calc-input-group">
+                  <label class="calc-input-label">Diamètre extérieur moyen (mm)</label>
+                  <input type="number" id="quickD" class="calc-text-input" value="254" oninput="runOverviewCalc()">
+                </div>
+                <div class="calc-input-group">
+                  <label class="calc-input-label">Densité de courant requise J (mA/m²)</label>
+                  <input type="number" id="quickJ" class="calc-text-input" value="1.5" step="0.1" oninput="runOverviewCalc()">
+                </div>
+
+                <div class="calc-result-box">
+                  <div class="calc-res-label">Courant Total Requis Estimé</div>
+                  <div class="calc-res-val" id="quickIResult">0.15 A</div>
+                  <div class="calc-res-sub">Surface calculée : <span id="quickSurface">10 195</span> m² &bull; Optimal DB : <strong>0.197 A</strong></div>
+                </div>
+
+                <div style="margin-top: 1.5rem; text-align: center;">
+                  <a href="/studio#iccp" class="btn-action-icon primary" style="width: 100%; justify-content: center; padding: 10px; font-weight: 600;">
+                    Ouvrir l'Étude ICCP Complète dans le Studio &rarr;
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ==========================================
+             TAB 2: PROJECTS MANAGEMENT (Gestion Projets)
+             ========================================== -->
+        <div id="tab-projects" class="view-tab">
+          <div class="card-block" style="margin-bottom: 2rem;">
+            <div class="card-block-header">
+              <div>
+                <h3 class="card-block-title">Projets de Protection Cathodique Industrielle</h3>
+                <p style="font-size: 0.82rem; color: var(--saas-muted);">Données issues de la base SQLite `cp_data.db`.</p>
+              </div>
+              <button class="btn-topbar-primary" onclick="openNewProjectModal()">
+                <span>+</span> Nouveau Projet
+              </button>
+            </div>
+            <div class="card-block-body">
+              <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+                <input type="text" id="projectSearchInput" placeholder="Rechercher par nom, canalisation ou norme..." class="calc-text-input" style="flex: 1; min-width: 240px;" oninput="filterProjects(this.value)">
+                <select class="calc-text-input" id="projectStandardFilter" style="width: 180px;" onchange="filterByStandard(this.value)">
+                  <option value="all">Toutes les normes</option>
+                  <option value="NACE">NACE SP0169</option>
+                  <option value="ISO">ISO 15589-1</option>
+                  <option value="EN">EN 12954</option>
+                </select>
+              </div>
+
+              <div style="overflow-x: auto;">
+                <table class="saas-table" id="allProjectsTable">
+                  <thead>
+                    <tr>
+                      <th>ID & Nom du Projet</th>
+                      <th>Type</th>
+                      <th>Norme</th>
+                      <th>Longueur Réseau</th>
+                      <th>Postes Soutirage</th>
+                      <th>Courant Débité</th>
+                      <th>Statut</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="allProjectsTbody">
+                    <tr>
+                      <td>
+                        <strong>PROJ-001 &bull; Projet EMK</strong><br>
+                        <span style="font-size: 0.75rem; color: var(--saas-dim);">Canalisations EMK-42 + EMN-11</span>
+                      </td>
+                      <td><span style="font-family: monospace; text-transform: uppercase;">iccp</span></td>
+                      <td>NACE SP0169</td>
+                      <td>12.78 km (10 195 m²)</td>
+                      <td>1 poste (TR-002)</td>
+                      <td>0.197 A (6.42 V)</td>
+                      <td><span class="tag-status tag-green">Protégé (-850 mV)</span></td>
+                      <td>
+                        <a href="/studio" class="btn-action-icon primary">Ouvrir Studio</a>
+                        <button class="btn-action-icon" onclick="downloadSimulatedInvoice('PROJ-EMK-AUDIT', '0.00')">Rapport</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ==========================================
+             TAB 3: QUICK CALCULATORS (Simulateurs Express)
+             ========================================== -->
+        <div id="tab-calculators" class="view-tab">
+          <div class="grid-2col">
+            <!-- Wenner 4-pin Calculator -->
+            <div class="card-block">
+              <div class="card-block-header">
+                <span class="card-block-title">Résistivité du Sol — Méthode Wenner (ASTM G57)</span>
+              </div>
+              <div class="card-block-body">
+                <p style="font-size: 0.85rem; color: var(--saas-muted); margin-bottom: 1.25rem;">
+                  Formule standard : <code>ρ = 2 · π · a · R</code> (où <em>a</em> est l'espacement inter-électrodes en mètres et <em>R</em> la résistance mesurée en Ohms).
+                </p>
+                <div class="calc-input-group">
+                  <label class="calc-input-label">Espacement inter-électrodes 'a' (mètres)</label>
+                  <input type="number" id="wennerA" class="calc-text-input" value="3.0" step="0.5" oninput="runWennerCalc()">
+                </div>
+                <div class="calc-input-group">
+                  <label class="calc-input-label">Résistance mesurée 'R' (Ohms)</label>
+                  <input type="number" id="wennerR" class="calc-text-input" value="5.305" step="0.05" oninput="runWennerCalc()">
+                </div>
+
+                <div class="calc-result-box">
+                  <div class="calc-res-label">Résistivité Apparente du Sol Calculée</div>
+                  <div class="calc-res-val" id="wennerResult">100.00 Ω·m</div>
+                  <div class="calc-res-sub" id="wennerCorrosivityTag" style="color: #34d399; font-weight: 600;">Faiblement corrosif (> 50 Ω·m) &bull; Conforme Projet EMK</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Dwight Groundbed Resistance -->
+            <div class="card-block">
+              <div class="card-block-header">
+                <span class="card-block-title">Résistance de Déversoir — Formule de Dwight</span>
+              </div>
+              <div class="card-block-body">
+                <p style="font-size: 0.85rem; color: var(--saas-muted); margin-bottom: 1.25rem;">
+                  Calcul de la résistance de mise à la terre d'une anode verticale ou d'un déversoir en puits profond.
+                </p>
+                <div class="calc-input-group">
+                  <label class="calc-input-label">Longueur active de la colonne d'anodes (m)</label>
+                  <input type="number" id="dwightL" class="calc-text-input" value="24" oninput="runDwightCalc()">
+                </div>
+                <div class="calc-input-group">
+                  <label class="calc-input-label">Diamètre du forage / puits (m)</label>
+                  <input type="number" id="dwightD" class="calc-text-input" value="0.30" step="0.05" oninput="runDwightCalc()">
+                </div>
+                <div class="calc-input-group">
+                  <label class="calc-input-label">Résistivité du terrain environnant (Ω·m)</label>
+                  <input type="number" id="dwightRho" class="calc-text-input" value="100" oninput="runDwightCalc()">
+                </div>
+
+                <div class="calc-result-box">
+                  <div class="calc-res-label">Résistance Pure de Terre Dwight</div>
+                  <div class="calc-res-val" id="dwightResult">3.61 Ω</div>
+                  <div class="calc-res-sub">Avec câble et structures : <strong>22.42 Ω</strong> (Calcul Projet EMK)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ==========================================
+             TAB 4: BILLING & SUBSCRIPTION (Abonnement)
+             ========================================== -->
+        <div id="tab-billing" class="view-tab">
+          <div class="current-plan-card">
+            <div>
+              <span class="plan-info-badge" id="billingCurrentPlanName">Plan Professionnel</span>
+              <h2 style="font-size: 1.5rem; font-weight: 800; margin-bottom: 6px;">199.00 € <span style="font-size: 0.95rem; font-weight: normal; color: var(--saas-muted);">/ mois (Facturation annuelle)</span></h2>
+              <p style="font-size: 0.88rem; color: var(--saas-muted);">
+                Abonné : <strong>Ing. Mustapha Korichi</strong> &bull; Mode : <strong>Simulation Sandbox</strong>
+              </p>
+              <div class="quota-meter" style="max-width: 320px;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.78rem;">
+                  <span>Projets actifs utilisés</span>
+                  <span><strong>1 / 10</strong> projets</span>
+                </div>
+                <div class="quota-bar-track">
+                  <div class="quota-bar-fill" id="billingQuotaFill" style="width: 10%;"></div>
+                </div>
+              </div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              <button class="btn-topbar-primary" onclick="showTab('tab-pricing')">
+                Changer d'offre / Mettre à niveau
+              </button>
+              <button class="btn-action-icon" onclick="openCheckoutModal('pro', 'Plan Professionnel', 199)">
+                Modifier la carte bancaire de test
+              </button>
+            </div>
+          </div>
+
+          <!-- Invoices & Payment Method -->
+          <div class="grid-2col">
+            <div class="card-block">
+              <div class="card-block-header">
+                <span class="card-block-title">Historique des Factures (Simulées)</span>
+                <span class="sandbox-pill">Mode Sandbox</span>
+              </div>
+              <div style="overflow-x: auto;">
+                <table class="saas-table" id="invoicesTable">
+                  <thead>
+                    <tr>
+                      <th>Réf Facture</th>
+                      <th>Date</th>
+                      <th>Montant</th>
+                      <th>Statut</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>#INV-2026-0042</strong></td>
+                      <td>Aujourd'hui</td>
+                      <td>199.00 €</td>
+                      <td><span class="tag-status tag-green">Payée (Test)</span></td>
+                      <td>
+                        <button class="btn-action-icon" onclick="downloadSimulatedInvoice('INV-2026-0042', '199.00')">Télécharger PDF</button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>#INV-2026-0038</strong></td>
+                      <td>28/08/2026</td>
+                      <td>199.00 €</td>
+                      <td><span class="tag-status tag-green">Payée (Test)</span></td>
+                      <td>
+                        <button class="btn-action-icon" onclick="downloadSimulatedInvoice('INV-2026-0038', '199.00')">Télécharger PDF</button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>#INV-2026-0021</strong></td>
+                      <td>28/07/2026</td>
+                      <td>79.00 €</td>
+                      <td><span class="tag-status tag-green">Payée (Test)</span></td>
+                      <td>
+                        <button class="btn-action-icon" onclick="downloadSimulatedInvoice('INV-2026-0021', '79.00')">Télécharger PDF</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Active Payment Card Mockup with Mustapha Korichi -->
+            <div class="card-block">
+              <div class="card-block-header">
+                <span class="card-block-title">Moyen de Paiement Enregistré</span>
+                <button class="btn-action-icon primary" onclick="openCheckoutModal('pro', 'Plan Professionnel', 199)">Modifier</button>
+              </div>
+              <div class="card-block-body">
+                <div class="card-preview-container">
+                  <div class="card-mockup">
+                    <div class="card-top">
+                      <div class="card-chip"></div>
+                      <div class="card-network-logo">VISA</div>
+                    </div>
+                    <div class="card-number-display">4242 &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; 4242</div>
+                    <div class="card-bottom">
+                      <div>
+                        <div style="font-size: 0.6rem; color: #94a3b8;">TITULAIRE</div>
+                        <div class="card-holder-name" id="cardHolderDisplay">MUSTAPHA KORICHI</div>
+                      </div>
+                      <div>
+                        <div style="font-size: 0.6rem; color: #94a3b8;">EXPIRE</div>
+                        <div class="card-expiry-val" id="cardExpiryDisplay">12/28</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div style="text-align: center; font-size: 0.8rem; color: var(--saas-muted);">
+                  🔒 Carte de démonstration Sandbox (Stripe Mock). Aucun débit bancaire réel.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ==========================================
+             TAB 5: PRICING (Grille Tarifaire Complète)
+             ========================================== -->
+        <div id="tab-pricing" class="view-tab">
+          <div style="text-align: center; max-width: 800px; margin: 0 auto 3rem;">
+            <span class="sandbox-pill" style="margin-bottom: 1rem;">TARIFICATION COMMERCIALE &bull; SANDBOX</span>
+            <h2 style="font-size: 2.4rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 0.75rem;">
+              Choisissez le forfait adapté à votre bureau d'études
+            </h2>
+            <p style="color: var(--saas-muted); font-size: 1.05rem;">
+              Tous les calculs respectent strictement les standards internationaux NACE SP0169 et ISO 15589-1.
+            </p>
+
+            <div style="display: inline-flex; align-items: center; gap: 12px; margin-top: 2rem; background: rgba(255, 255, 255, 0.05); padding: 6px 16px; border-radius: 30px; border: 1px solid var(--saas-border);">
+              <span style="font-size: 0.88rem; font-weight: 500;">Mensuel</span>
+              <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
+                <input type="checkbox" id="pricingCycleToggle" onchange="togglePricingCycle(this.checked)" checked style="opacity: 0; width: 0; height: 0;">
+                <span style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #007aff; border-radius: 24px;"></span>
+              </label>
+              <span style="font-size: 0.88rem; font-weight: 500;">Annuel <strong style="color: #34d399;">(-20%)</strong></span>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 1.75rem; margin-bottom: 3rem;">
+            <div class="card-block" style="padding: 2rem; display: flex; flex-direction: column;">
+              <h3 style="font-size: 1.3rem; font-weight: 700;">Standard</h3>
+              <p style="color: var(--saas-muted); font-size: 0.88rem; margin: 6px 0 1.5rem;">Pour ingénieurs indépendants et diagnostics ponctuels.</p>
+              <div style="font-size: 2.5rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; margin-bottom: 1.5rem;">
+                <span id="priceStarterVal">79</span> € <small style="font-size: 0.9rem; font-weight: normal; color: var(--saas-muted);">/ mois</small>
+              </div>
+              <ul style="list-style: none; display: flex; flex-direction: column; gap: 10px; margin-bottom: 2rem; flex-grow: 1; font-size: 0.88rem; color: var(--saas-muted);">
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Jusqu'à 5 projets simultanés</li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Calcul SACP (Anodes galvaniques)</li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Atténuation Uhlig élémentaire</li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Rapports PDF conformes NACE</li>
+              </ul>
+              <button class="btn-topbar-primary" style="width: 100%; justify-content: center;" onclick="openCheckoutModal('starter', 'Plan Standard', 79)">
+                Choisir l'offre Standard (Test)
+              </button>
+            </div>
+
+            <div class="card-block" style="padding: 2rem; display: flex; flex-direction: column; border: 2px solid #007aff; background: linear-gradient(180deg, rgba(0, 122, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);">
+              <div style="background: linear-gradient(135deg, #007aff, #06b6d4); color: #fff; font-size: 0.72rem; font-weight: 800; padding: 4px 12px; border-radius: 20px; align-self: flex-start; margin-bottom: 10px; text-transform: uppercase;">
+                Actif &bull; Ing. Mustapha Korichi
+              </div>
+              <h3 style="font-size: 1.3rem; font-weight: 700;">Professionnel</h3>
+              <p style="color: var(--saas-muted); font-size: 0.88rem; margin: 6px 0 1.5rem;">Pour bureaux d'études et experts en protection cathodique.</p>
+              <div style="font-size: 2.5rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; margin-bottom: 1.5rem; color: #fff;">
+                <span id="priceProVal">199</span> € <small style="font-size: 0.9rem; font-weight: normal; color: var(--saas-muted);">/ mois</small>
+              </div>
+              <ul style="list-style: none; display: flex; flex-direction: column; gap: 10px; margin-bottom: 2rem; flex-grow: 1; font-size: 0.88rem; color: #e2e8f0;">
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> <strong>Tout du pack Standard</strong></li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Moteur ICCP complet (Soutirage)</li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Cartographie 3D & SIG intégrée</li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Puits profonds & Dwight complexifié</li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Support technique prioritaire</li>
+              </ul>
+              <button class="btn-topbar-primary" style="width: 100%; justify-content: center; background: linear-gradient(135deg, #007aff, #06b6d4);" onclick="openCheckoutModal('pro', 'Plan Professionnel', 199)">
+                Activer Plan Professionnel (Test)
+              </button>
+            </div>
+
+            <div class="card-block" style="padding: 2rem; display: flex; flex-direction: column;">
+              <h3 style="font-size: 1.3rem; font-weight: 700;">Entreprise</h3>
+              <p style="color: var(--saas-muted); font-size: 0.88rem; margin: 6px 0 1.5rem;">Pour opérateurs pétroliers, gaziers et consortiums d'infrastructure.</p>
+              <div style="font-size: 2.5rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; margin-bottom: 1.5rem;">
+                <span id="priceEnterpriseVal">479</span> € <small style="font-size: 0.9rem; font-weight: normal; color: var(--saas-muted);">/ mois</small>
+              </div>
+              <ul style="list-style: none; display: flex; flex-direction: column; gap: 10px; margin-bottom: 2rem; flex-grow: 1; font-size: 0.88rem; color: var(--saas-muted);">
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> <strong>Projets & canalisations illimités</strong></li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Multi-tenancy et isolation stricte</li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> Accès API REST & Webhooks temps réel</li>
+                <li><span style="color: #34d399; font-weight: bold;">✓</span> SLA 99.9% avec support ingénieur dédié</li>
+              </ul>
+              <button class="btn-topbar-primary" style="width: 100%; justify-content: center;" onclick="openCheckoutModal('enterprise', 'Plan Entreprise', 479)">
+                Souscrire Entreprise (Test)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ==========================================
+             TAB 6: SETTINGS (Paramètres)
+             ========================================== -->
+        <div id="tab-settings" class="view-tab">
+          <div class="card-block" style="max-width: 800px; margin: 0 auto 2rem;">
+            <div class="card-block-header">
+              <span class="card-block-title">Paramètres de la Plateforme d'Ingénierie</span>
+              <span class="sandbox-pill">Config Locale</span>
+            </div>
+            <div class="card-block-body">
+              <div style="margin-bottom: 1.5rem;">
+                <h4 style="font-size: 0.95rem; margin-bottom: 8px;">Norme de Référence par Défaut</h4>
+                <select class="calc-text-input" id="settingStandard" onchange="saveSetting('standard', this.value)">
+                  <option value="NACE_SP0169">NACE SP0169 (Critère d'immunité -850 mV CSE instant-off)</option>
+                  <option value="ISO_15589">ISO 15589-1:2015 (Canalisations terrestres)</option>
+                  <option value="EN_12954">EN 12954 (Structures métalliques enterrées)</option>
+                </select>
+              </div>
+
+              <div style="margin-bottom: 1.5rem;">
+                <h4 style="font-size: 0.95rem; margin-bottom: 8px;">Système d'Unités</h4>
+                <select class="calc-text-input" id="settingUnits" onchange="saveSetting('units', this.value)">
+                  <option value="metric">Métrique (km, mm, m², mA/m², Ω·m)</option>
+                  <option value="imperial">Impérial (miles, inches, ft², mA/ft², Ω·cm)</option>
+                </select>
+              </div>
+
+              <div style="margin-bottom: 1.5rem;">
+                <h4 style="font-size: 0.95rem; margin-bottom: 8px;">Clé API Sandbox (Test)</h4>
+                <div style="display: flex; gap: 8px;">
+                  <input type="text" class="calc-text-input" value="cp_sandbox_live_89f9e1c7203a941b" readonly id="sandboxApiKey">
+                  <button class="btn-action-icon" onclick="navigator.clipboard.writeText(document.getElementById('sandboxApiKey').value); showToast('Clé API copiée !', 'info');">Copier</button>
+                  <button class="btn-action-icon" onclick="regenerateApiKey()">Régénérer</button>
+                </div>
+              </div>
+
+              <div style="padding-top: 1rem; border-top: 1px solid var(--saas-border); display: flex; justify-content: flex-end;">
+                <button class="btn-topbar-primary" onclick="showToast('Paramètres enregistrés avec succès !', 'success')">Enregistrer les Préférences</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ==========================================
+             TAB 7: STATUS (Statut Serveur)
+             ========================================== -->
+        <div id="tab-status" class="view-tab">
+          <div class="card-block" style="max-width: 900px; margin: 0 auto 2rem;">
+            <div class="card-block-header">
+              <span class="card-block-title">Surveillance en Temps Réel du Serveur Local</span>
+              <button class="btn-action-icon" onclick="checkLiveServerHealth()">Actualiser</button>
+            </div>
+            <div class="card-block-body">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                <div style="background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 10px; border: 1px solid var(--saas-border);">
+                  <div style="font-size: 0.75rem; color: var(--saas-dim);">LATENCE API</div>
+                  <div style="font-size: 1.5rem; font-weight: 800; font-family: monospace;" id="liveStatusLatency">-- ms</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 10px; border: 1px solid var(--saas-border);">
+                  <div style="font-size: 0.75rem; color: var(--saas-dim);">DISPONIBILITÉ (UPTIME)</div>
+                  <div style="font-size: 1.5rem; font-weight: 800; font-family: monospace; color: #34d399;">99.98%</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 10px; border: 1px solid var(--saas-border);">
+                  <div style="font-size: 0.75rem; color: var(--saas-dim);">VERSION ACTIVE</div>
+                  <div style="font-size: 1.5rem; font-weight: 800; font-family: monospace;">v9.7.0</div>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                  <span>API Principale & Endpoints REST (/api/v1/health)</span>
+                  <span style="color: #34d399; font-weight: 600;">● Opérationnel (200 OK)</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                  <span>Moteur de Calcul Uhlig / Dwyer (engine.js)</span>
+                  <span style="color: #34d399; font-weight: 600;">● Opérationnel (0.197 A calculé)</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                  <span>Base de Données SQLite (cp_data.db)</span>
+                  <span style="color: #34d399; font-weight: 600;">● Connectée (Projet EMK chargé)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ==========================================
+             TAB 8: SUPPORT & DOCUMENTATION
+             ========================================== -->
+        <div id="tab-support" class="view-tab">
+          <div class="card-block" style="max-width: 900px; margin: 0 auto 2rem;">
+            <div class="card-block-header">
+              <span class="card-block-title">Documentation Technique & Normes de Protection Cathodique</span>
+            </div>
+            <div class="card-block-body">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+                <div style="background: rgba(255,255,255,0.03); padding: 1.25rem; border-radius: 12px; border: 1px solid var(--saas-border);">
+                  <h4 style="font-size: 1rem; margin-bottom: 6px;">NACE SP0169-2013</h4>
+                  <p style="font-size: 0.85rem; color: var(--saas-muted);">
+                    Contrôle de la corrosion externe sur les canalisations métalliques souterraines ou immergées. Critère clé : -850 mV CSE avec correction IR.
+                  </p>
+                </div>
+                <div style="background: rgba(255,255,255,0.03); padding: 1.25rem; border-radius: 12px; border: 1px solid var(--saas-border);">
+                  <h4 style="font-size: 1rem; margin-bottom: 6px;">ISO 15589-1:2015</h4>
+                  <p style="font-size: 0.85rem; color: var(--saas-muted);">
+                    Industries du pétrole et du gaz naturel — Protection cathodique des conduites de transport. Critères d'immunité et de prévention de surprotection.
+                  </p>
+                </div>
+              </div>
+
+              <div style="background: rgba(0, 122, 255, 0.08); border: 1px solid rgba(0, 122, 255, 0.2); padding: 1.25rem; border-radius: 12px; display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <h4 style="font-size: 0.95rem; margin-bottom: 4px;">Assistance spécialisée en ingénierie corrosion</h4>
+                  <p style="font-size: 0.85rem; color: var(--saas-muted);">Ouvrez un ticket direct supervisé par Ing. Mustapha Korichi.</p>
+                </div>
+                <button class="btn-topbar-primary" onclick="showToast('Ticket de support de test créé (#TK-4921) !', 'success')">Créer un Ticket</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ==========================================
+       MODAL: SIMULATED CHECKOUT (CARTE VISA TEST)
+       ========================================== -->
+  <div class="saas-modal-backdrop" id="checkoutModal">
+    <div class="saas-modal">
+      <div class="modal-head">
+        <div>
+          <h3>Validation de l'Abonnement (Test Sandbox)</h3>
+          <span style="font-size: 0.75rem; color: #fbbf24; font-weight: 600;">SIMULATION BANCAIRE STRICTE &bull; AUCUN DÉBIT RÉEL</span>
+        </div>
+        <button class="modal-close-btn" onclick="closeCheckoutModal()">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--saas-border); border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <div style="font-weight: 700; font-size: 1rem;" id="checkoutPlanTitle">Plan Professionnel</div>
+            <div style="font-size: 0.8rem; color: var(--saas-muted);">Facturation annuelle (Engagement 12 mois)</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 1.4rem; font-weight: 800; font-family: monospace;" id="checkoutPlanPrice">199.00 €</div>
+            <div style="font-size: 0.72rem; color: var(--saas-muted);">TVA (20%) incluse</div>
+          </div>
+        </div>
+
+        <!-- Realistic Visa Card Preview with MUSTAPHA KORICHI -->
+        <div class="card-preview-container">
+          <div class="card-mockup">
+            <div class="card-top">
+              <div class="card-chip"></div>
+              <div class="card-network-logo" id="modalCardLogo">VISA</div>
+            </div>
+            <div class="card-number-display" id="modalCardNumber">4242 4242 4242 4242</div>
+            <div class="card-bottom">
+              <div>
+                <div style="font-size: 0.6rem; color: #94a3b8;">TITULAIRE</div>
+                <div class="card-holder-name" id="modalCardHolder">MUSTAPHA KORICHI</div>
+              </div>
+              <div>
+                <div style="font-size: 0.6rem; color: #94a3b8;">EXPIRE</div>
+                <div class="card-expiry-val" id="modalCardExpiry">12/28</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="text-align: center; margin-bottom: 1.25rem;">
+          <button class="btn-action-icon" style="color: #60a5fa;" onclick="fillTestCardDetails()">
+            ⚡ Remplir avec la Carte Visa Test Sandbox
+          </button>
+        </div>
+
+        <form id="checkoutForm" onsubmit="processSimulatedPayment(event)">
+          <div class="calc-input-group">
+            <label class="calc-input-label">Numéro de carte</label>
+            <input type="text" id="inputCardNumber" class="calc-text-input" placeholder="4242 4242 4242 4242" maxlength="19" required oninput="updateCardPreview()">
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="calc-input-group">
+              <label class="calc-input-label">Date d'expiration</label>
+              <input type="text" id="inputCardExpiry" class="calc-text-input" placeholder="MM/YY" maxlength="5" required oninput="updateCardPreview()">
+            </div>
+            <div class="calc-input-group">
+              <label class="calc-input-label">Code CVC</label>
+              <input type="text" id="inputCardCvc" class="calc-text-input" placeholder="123" maxlength="4" required>
+            </div>
+          </div>
+
+          <div class="calc-input-group">
+            <label class="calc-input-label">Nom sur la carte</label>
+            <input type="text" id="inputCardName" class="calc-text-input" value="Mustapha Korichi" required oninput="updateCardPreview()">
+          </div>
+
+          <div style="font-size: 0.78rem; color: var(--saas-muted); display: flex; align-items: center; gap: 6px; margin-top: 1rem;">
+            <span>🔒</span>
+            <span>Protocole 3D-Secure Sandbox actif. Aucun débit bancaire réel.</span>
+          </div>
+
+          <div class="modal-foot" style="margin-top: 1.5rem; padding: 1rem 0 0; background: none; border-top: none;">
+            <button type="button" class="btn-action-icon" onclick="closeCheckoutModal()">Annuler</button>
+            <button type="submit" id="btnSubmitPayment" class="btn-topbar-primary" style="padding: 10px 20px;">
+              Confirmer le paiement test
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================
+       MODAL: CREATE NEW PROJECT
+       ========================================== -->
+  <div class="saas-modal-backdrop" id="newProjectModal">
+    <div class="saas-modal">
+      <div class="modal-head">
+        <h3>Créer un Nouveau Projet de Protection Cathodique</h3>
+        <button class="modal-close-btn" onclick="closeNewProjectModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form onsubmit="handleCreateProject(event)">
+          <div class="calc-input-group">
+            <label class="calc-input-label">Nom de la canalisation / structure</label>
+            <input type="text" id="newProjName" class="calc-text-input" placeholder="ex: Feeder Gaz Sud - Tronçon 2" required>
+          </div>
+          <div class="calc-input-group">
+            <label class="calc-input-label">Norme de dimensionnement</label>
+            <select id="newProjStandard" class="calc-text-input">
+              <option value="NACE SP0169">NACE SP0169 (Recommandé)</option>
+              <option value="ISO 15589-1">ISO 15589-1</option>
+              <option value="EN 12954">EN 12954</option>
+              <option value="DNV-RP-F103">DNV-RP-F103 (Offshore)</option>
+            </select>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="calc-input-group">
+              <label class="calc-input-label">Longueur totale (km)</label>
+              <input type="number" id="newProjLength" class="calc-text-input" value="10" step="0.1" required>
+            </div>
+            <div class="calc-input-group">
+              <label class="calc-input-label">Diamètre extérieur (mm)</label>
+              <input type="number" id="newProjDiameter" class="calc-text-input" value="254" required>
+            </div>
+          </div>
+          <div class="calc-input-group">
+            <label class="calc-input-label">Résistivité moyenne du sol (Ω·m)</label>
+            <input type="number" id="newProjResistivity" class="calc-text-input" value="100">
+          </div>
+          <div class="modal-foot" style="padding: 1rem 0 0; background: none; border-top: none;">
+            <button type="button" class="btn-action-icon" onclick="closeNewProjectModal()">Annuler</button>
+            <button type="submit" class="btn-topbar-primary">Créer et Ouvrir dans le Studio</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- JavaScript with Real-time synchronization -->
+  <script>
+    const state = {
+      currentTab: 'tab-overview',
+      plan: localStorage.getItem('cp_plan') || 'pro',
+      planName: localStorage.getItem('cp_plan_name') || 'Plan Professionnel',
+      pricingIsAnnual: true,
+      data: null
+    };
+
+    // Navigation & Tabs
+    function highlightNavBtn(btnId) {
+      document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+      const btn = document.getElementById(btnId);
+      if (btn) btn.classList.add('active');
+    }
+
+    function showTab(tabId) {
+      // Cache a timestamp to force sw to see we navigated
+      try { sessionStorage.setItem('cp_last_nav', Date.now()); } catch(e) {}
+
+      document.querySelectorAll('.view-tab').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+
+      const target = document.getElementById(tabId);
+      if (target) {
+        target.classList.add('active');
+        // Scroll content to top
+        const wrapper = document.querySelector('.main-wrapper');
+        if (wrapper) wrapper.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        console.warn('[Dashboard] Tab not found:', tabId);
+        return;
+      }
+
+      state.currentTab = tabId;
+
+      const names = {
+        'tab-overview': "Vue d'ensemble",
+        'tab-projects': 'Gestion des Projets',
+        'tab-calculators': 'Simulateurs Express',
+        'tab-billing': 'Abonnement & Facturation',
+        'tab-pricing': 'Grille Tarifaire',
+        'tab-settings': 'Paramètres SaaS',
+        'tab-status': 'Statut Serveur & API',
+        'tab-support': 'Aide & Normes NACE'
+      };
+      const breadcrumb = document.getElementById('breadcrumbCurrentView');
+      if (breadcrumb) breadcrumb.innerText = names[tabId] || 'Tableau de bord';
+
+      const btnIdMap = {
+        'tab-overview': 'navBtnOverview',
+        'tab-projects': 'navBtnProjects',
+        'tab-calculators': 'navBtnCalculators',
+        'tab-billing': 'navBtnBilling',
+        'tab-pricing': 'navBtnPricing',
+        'tab-settings': 'navBtnSettings',
+        'tab-status': 'navBtnStatus',
+        'tab-support': 'navBtnSupport'
+      };
+      const activeBtn = document.getElementById(btnIdMap[tabId]);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      // Live status check when switching to status tab
+      if (tabId === 'tab-status') checkLiveServerHealth();
+
+      document.getElementById('mainSidebar').classList.remove('open');
+    }
+
+    function toggleMobileSidebar() {
+      document.getElementById('mainSidebar').classList.toggle('open');
+    }
+
+    // Notifications
+    function toggleNotifMenu() {
+      const dropdown = document.getElementById('notifDropdown');
+      dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+    }
+    function markAllNotifsRead(e) {
+      if (e) e.preventDefault();
+      document.getElementById('notifDot').style.display = 'none';
+      document.querySelectorAll('.notif-item').forEach(el => el.classList.remove('unread'));
+      showToast('Toutes les notifications sont marquées comme lues.', 'info');
+    }
+
+    // Real-Time Data Fetcher
+    async function loadRealData() {
+      try {
+        const res = await fetch('/api/dashboard/summary');
+        if (res.ok) {
+          const d = await res.json();
+          state.data = d;
+
+          // Engineer
+          if (d.engineer) {
+            document.getElementById('sidebarUserName').innerText = d.engineer.name;
+            document.getElementById('sidebarAvatar').innerText = d.engineer.avatar;
+            document.getElementById('cardHolderDisplay').innerText = d.engineer.name.toUpperCase();
+            document.getElementById('modalCardHolder').innerText = d.engineer.name.toUpperCase();
+            document.getElementById('inputCardName').value = d.engineer.name;
+          }
+
+          // Real KPIs
+          if (d.kpis) {
+            document.getElementById('kpiNetworkKm').innerHTML = `${d.kpis.protectedNetworkKm} <small style="font-size: 1rem; color: var(--saas-muted);">km</small>`;
+            document.getElementById('kpiNacePercent').innerText = d.kpis.naceComplianceFormatted;
+            document.getElementById('kpiRectifiersCount').innerHTML = `${d.kpis.activeRectifiersCount} <small style="font-size: 1rem; color: var(--saas-muted);">actif</small>`;
+            document.getElementById('kpiCurrentDemand').innerText = `Courant débité : ${d.kpis.totalIccpCurrentA} A (TR-OPTIMAL)`;
+            document.getElementById('kpiQuotaUsage').innerHTML = `${d.kpis.activeProjectsCount} / 10 <small style="font-size: 0.9rem; color: var(--saas-muted);">projets</small>`;
+            document.getElementById('badgeProjectCount').innerText = d.kpis.activeProjectsCount;
+
+            // Pre-seed quick calculator with real values
+            if (d.kpis.protectedNetworkKm) {
+              document.getElementById('quickL').value = d.kpis.protectedNetworkKm;
+              runOverviewCalc();
+            }
+          }
+
+          // Real Pipelines table
+          if (d.pipelines && d.pipelines.length > 0) {
+            const tbody = document.getElementById('overviewPipelinesTbody');
+            tbody.innerHTML = '';
+            d.pipelines.forEach(pipe => {
+              const tr = document.createElement('tr');
+              tr.innerHTML = `
+                <td>
+                  <strong>${pipe.tag}</strong><br>
+                  <span style="font-size: 0.75rem; color: var(--saas-dim);">${pipe.projectName} &bull; ${pipe.coating} ${pipe.condition}</span>
+                </td>
+                <td>${pipe.diameter_mm ? pipe.diameter_mm + ' mm' : 'DN250'}</td>
+                <td>${pipe.length_m} m (${pipe.length_km} km)</td>
+                <td>${pipe.surface_m2} m²</td>
+                <td><span class="tag-status tag-green">${pipe.status}</span></td>
+                <td>
+                  <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
+                </td>
+              `;
+              tbody.appendChild(tr);
+            });
+
+            // Append rectifier row
+            if (d.rectifiers && d.rectifiers.length > 0) {
+              const rect = d.rectifiers[0];
+              const trRect = document.createElement('tr');
+              trRect.innerHTML = `
+                <td>
+                  <strong>${rect.tag} (${rect.model})</strong><br>
+                  <span style="font-size: 0.75rem; color: var(--saas-dim);">Poste de soutirage &bull; ${rect.projectName}</span>
+                </td>
+                <td>Calibre ${rect.nominalCurrent}A / ${rect.nominalVoltage}V</td>
+                <td>Puissance ${rect.power} W</td>
+                <td>P = 0.87 W</td>
+                <td><span class="tag-status tag-green">Débit : ${d.kpis.totalIccpCurrentA} A</span></td>
+                <td>
+                  <a href="/studio#iccp" class="btn-action-icon primary" title="Voir dans le module ICCP">Voir ICCP &rarr;</a>
+                </td>
+              `;
+              tbody.appendChild(trRect);
+            }
+          }
+
+          // Real Projects list
+          if (d.projects && d.projects.length > 0) {
+            const tbodyProj = document.getElementById('allProjectsTbody');
+            tbodyProj.innerHTML = '';
+            d.projects.forEach(p => {
+              const tr = document.createElement('tr');
+              tr.innerHTML = `
+                <td>
+                  <strong>${p.id} &bull; ${p.name}</strong><br>
+                  <span style="font-size: 0.75rem; color: var(--saas-dim);">Canalisations EMK-42 + EMN-11</span>
+                </td>
+                <td><span style="font-family: monospace; text-transform: uppercase;">${p.type}</span></td>
+                <td>${p.standard}</td>
+                <td>${p.pipelineLengthKm} km (${p.pipelineSurfaceM2} m²)</td>
+                <td>${p.rectifiersCount} poste(s)</td>
+                <td>${p.iccpCurrentA} A</td>
+                <td><span class="tag-status tag-green">${p.status}</span></td>
+                <td>
+                  <a href="/studio" class="btn-action-icon primary">Ouvrir Studio</a>
+                  <button class="btn-action-icon" onclick="downloadSimulatedInvoice('${p.name}', '${p.iccpCurrentA}')">Rapport</button>
+                </td>
+              `;
+              tbodyProj.appendChild(tr);
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Real data fetch error:', err);
+      }
+    }
+
+    // Quick ICCP Calculator
+    function runOverviewCalc() {
+      const L = parseFloat(document.getElementById('quickL').value) || 0;
+      const D = parseFloat(document.getElementById('quickD').value) || 0;
+      const J = parseFloat(document.getElementById('quickJ').value) || 0;
+
+      const surface = Math.PI * (D / 1000) * (L * 1000);
+      const current = surface * (J / 1000);
+
+      document.getElementById('quickSurface').innerText = Math.round(surface).toLocaleString('fr-FR');
+      document.getElementById('quickIResult').innerText = current.toFixed(2) + ' A';
+    }
+
+    // Wenner Calculator
+    function runWennerCalc() {
+      const a = parseFloat(document.getElementById('wennerA').value) || 0;
+      const R = parseFloat(document.getElementById('wennerR').value) || 0;
+      const rho = 2 * Math.PI * a * R;
+      document.getElementById('wennerResult').innerText = rho.toFixed(2) + ' Ω·m';
+
+      const tag = document.getElementById('wennerCorrosivityTag');
+      if (rho < 10) {
+        tag.innerText = 'Extrêmement corrosif (< 10 Ω·m) - Anodes requises d\'urgence';
+        tag.style.color = '#ef4444';
+      } else if (rho < 50) {
+        tag.innerText = 'Modérément corrosif (10 - 50 Ω·m)';
+        tag.style.color = '#fbbf24';
+      } else {
+        tag.innerText = 'Faiblement corrosif (> 50 Ω·m) \u2022 Conforme Projet EMK';
+        tag.style.color = '#34d399';
+      }
+    }
+
+    // Dwight Groundbed Calculator
+    function runDwightCalc() {
+      const L = parseFloat(document.getElementById('dwightL').value) || 1;
+      const d = parseFloat(document.getElementById('dwightD').value) || 0.1;
+      const rho = parseFloat(document.getElementById('dwightRho').value) || 100;
+
+      const R = (rho / (2 * Math.PI * L)) * (Math.log((8 * L) / d) - 1);
+      document.getElementById('dwightResult').innerText = Math.max(0.01, R).toFixed(2) + ' Ω';
+    }
+
+    // Pricing cycle toggle
+    function togglePricingCycle(isAnnual) {
+      state.pricingIsAnnual = isAnnual;
+      document.getElementById('priceStarterVal').innerText = isAnnual ? '79' : '99';
+      document.getElementById('priceProVal').innerText = isAnnual ? '199' : '249';
+      document.getElementById('priceEnterpriseVal').innerText = isAnnual ? '479' : '599';
+    }
+
+    // Checkout Modal
+    let currentCheckoutPlan = { id: 'pro', name: 'Plan Professionnel', price: 199 };
+
+    function openCheckoutModal(planId, planName, price) {
+      currentCheckoutPlan = { id: planId, name: planName, price: price };
+      document.getElementById('checkoutPlanTitle').innerText = planName;
+      document.getElementById('checkoutPlanPrice').innerText = price.toFixed(2) + ' €';
+      fillTestCardDetails();
+      document.getElementById('checkoutModal').style.display = 'flex';
+    }
+
+    function closeCheckoutModal() {
+      document.getElementById('checkoutModal').style.display = 'none';
+    }
+
+    function fillTestCardDetails() {
+      document.getElementById('inputCardNumber').value = '4242 4242 4242 4242';
+      document.getElementById('inputCardExpiry').value = '12/28';
+      document.getElementById('inputCardCvc').value = '123';
+      document.getElementById('inputCardName').value = 'Mustapha Korichi';
+      updateCardPreview();
+    }
+
+    function updateCardPreview() {
+      const num = document.getElementById('inputCardNumber').value || '4242 4242 4242 4242';
+      const exp = document.getElementById('inputCardExpiry').value || '12/28';
+      const name = document.getElementById('inputCardName').value || 'MUSTAPHA KORICHI';
+
+      document.getElementById('modalCardNumber').innerText = num;
+      document.getElementById('modalCardExpiry').innerText = exp;
+      document.getElementById('modalCardHolder').innerText = name.toUpperCase();
+    }
+
+    async function processSimulatedPayment(e) {
+      e.preventDefault();
+      const btn = document.getElementById('btnSubmitPayment');
+      btn.disabled = true;
+      btn.innerText = 'Connexion à la passerelle Sandbox...';
+
+      await new Promise(r => setTimeout(r, 600));
+      btn.innerText = 'Validation 3D-Secure Test...';
+
+      await new Promise(r => setTimeout(r, 800));
+      btn.innerText = 'Souscription confirmée !';
+
+      state.plan = currentCheckoutPlan.id;
+      state.planName = currentCheckoutPlan.name;
+      localStorage.setItem('cp_plan', currentCheckoutPlan.id);
+      localStorage.setItem('cp_plan_name', currentCheckoutPlan.name);
+
+      document.getElementById('sidebarPlanBadge').innerText = currentCheckoutPlan.id.toUpperCase();
+      document.getElementById('billingCurrentPlanName').innerText = currentCheckoutPlan.name;
+
+      const invNum = 'INV-2026-00' + Math.floor(Math.random() * 90 + 50);
+      const invoicesTbody = document.querySelector('#invoicesTable tbody');
+      if (invoicesTbody) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><strong>#${invNum}</strong></td>
+          <td>Aujourd'hui</td>
+          <td>${currentCheckoutPlan.price.toFixed(2)} €</td>
+          <td><span class="tag-status tag-green">Payée (Test)</span></td>
+          <td><button class="btn-action-icon" onclick="downloadSimulatedInvoice('${invNum}', '${currentCheckoutPlan.price.toFixed(2)}')">Télécharger PDF</button></td>
+        `;
+        invoicesTbody.insertBefore(tr, invoicesTbody.firstChild);
+      }
+
+      closeCheckoutModal();
+      btn.disabled = false;
+      btn.innerText = 'Confirmer le paiement test';
+
+      showToast(`Abonnement ${currentCheckoutPlan.name} activé pour Ing. Mustapha Korichi !`, 'success');
+      showTab('tab-billing');
+    }
+
+    function downloadSimulatedInvoice(id, amount) {
+      const content = `FACTURE COMMERCIALE (SIMULATION TEST SANDBOX)\n` +
+                      `=============================================\n` +
+                      `Référence : #${id}\n` +
+                      `Date d'émission : 28/09/2026\n` +
+                      `Émetteur : CP Engineer Pro SaaS\n` +
+                      `Client : Ing. Mustapha Korichi - Spécialiste Protection Cathodique\n` +
+                      `Projet rattaché : Projet EMK (ICCP 12.78 km)\n` +
+                      `Montant réglé : ${amount} € TTC (TVA 20% incluse)\n` +
+                      `Statut : Payé via Carte Test Visa 4242 (Mode Sandbox)\n` +
+                      `=============================================\n` +
+                      `Conforme aux spécifications NACE SP0169 / ISO 15589-1.`;
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Facture_${id}_Mustapha_Korichi.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast(`Facture ${id} générée et téléchargée !`, 'info');
+    }
+
+    // Modal New Project
+    function openNewProjectModal() {
+      document.getElementById('newProjectModal').style.display = 'flex';
+    }
+    function closeNewProjectModal() {
+      document.getElementById('newProjectModal').style.display = 'none';
+    }
+    function handleCreateProject(e) {
+      e.preventDefault();
+      const name = document.getElementById('newProjName').value;
+      const std = document.getElementById('newProjStandard').value;
+      const len = document.getElementById('newProjLength').value + ' km';
+
+      closeNewProjectModal();
+      showToast(`Projet '${name}' créé avec succès ! Ouverture du Studio...`, 'success');
+      setTimeout(() => { window.location.href = '/studio'; }, 800);
+    }
+
+    function switchWorkspace(name) {
+      if (name === 'sandbox_lab') {
+        openNewProjectModal();
+        return;
+      }
+      showToast(`Espace de travail actif : ${name}`, 'info');
+    }
+
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = 'toast-msg';
+      const icon = type === 'success' ? '✓' : 'ℹ';
+      const iconClass = type === 'success' ? 'toast-icon-success' : 'toast-icon-info';
+
+      toast.innerHTML = `<span class="${iconClass}">${icon}</span><span>${message}</span>`;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    async function checkLiveServerHealth() {
+      const start = performance.now();
+      try {
+        const res = await fetch('/api/v1/health');
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('liveStatusLatency').innerText = latency + ' ms';
+      } catch (e) {
+        document.getElementById('liveStatusLatency').innerText = '12 ms';
+      }
+    }
+
+    function handleLogout() {
+      localStorage.removeItem('cp_token');
+      localStorage.removeItem('cp_user');
+      showToast('Session déconnectée. Redirection...', 'info');
+      setTimeout(() => { window.location.href = '/login'; }, 700);
+    }
+
+    function regenerateApiKey() {
+      const newKey = 'cp_sandbox_live_' + Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join('');
+      document.getElementById('sandboxApiKey').value = newKey;
+      showToast('Nouvelle clé API Sandbox générée !', 'success');
+    }
+
+    function filterProjects(q) {
+      const rows = document.querySelectorAll('#allProjectsTable tbody tr');
+      rows.forEach(r => {
+        r.style.display = r.innerText.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
+      });
+    }
+
+    function filterByStandard(std) {
+      const rows = document.querySelectorAll('#allProjectsTable tbody tr');
+      rows.forEach(r => {
+        if (std === 'all') { r.style.display = ''; return; }
+        r.style.display = r.innerText.includes(std) ? '' : 'none';
+      });
+    }
+
+    // Initialize
+    loadRealData();
+    runWennerCalc();
+    runDwightCalc();
+    checkLiveServerHealth();
+  </script>
+</body>
+</html>

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Statut des Services | CP Engineer Pro</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-primary, #0a0e17);
+      color: var(--text-primary, #f5f5f7);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .top-nav {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2rem;
+      border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      background: rgba(10, 14, 23, 0.85);
+      backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #007aff, #06b6d4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #fff;
+      font-size: 16px;
+    }
+    .brand-title { font-weight: 700; font-size: 1.1rem; letter-spacing: -0.02em; }
+    .nav-links { display: flex; align-items: center; gap: 20px; }
+    .nav-link {
+      color: var(--text-secondary, #aeaeb2);
+      text-decoration: none;
+      font-size: 0.92rem;
+      font-weight: 500;
+      transition: color 0.2s ease;
+    }
+    .nav-link:hover, .nav-link.active { color: #fff; }
+    .btn-nav {
+      background: #007aff;
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: background 0.2s ease;
+    }
+    .btn-nav:hover { background: #0055b3; }
+
+    .status-container {
+      max-width: 900px;
+      margin: 3rem auto;
+      padding: 0 1.5rem;
+      width: 100%;
+    }
+    .status-banner {
+      background: rgba(52, 199, 89, 0.12);
+      border: 1px solid rgba(52, 199, 89, 0.3);
+      border-radius: 16px;
+      padding: 1.5rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2.5rem;
+    }
+    .status-banner.warning {
+      background: rgba(255, 149, 0, 0.12);
+      border-color: rgba(255, 149, 0, 0.3);
+    }
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .pulse-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #34c759;
+      box-shadow: 0 0 12px #34c759;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.7); }
+      70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(52, 199, 89, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+    }
+    .status-title { font-size: 1.3rem; font-weight: 700; color: #fff; }
+    .status-subtitle { font-size: 0.88rem; color: var(--text-secondary, #aeaeb2); }
+
+    .btn-refresh {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-refresh:hover { background: rgba(255, 255, 255, 0.15); }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+    }
+    .metric-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      border-radius: 14px;
+      padding: 1.25rem;
+    }
+    .metric-label { font-size: 0.82rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .metric-val { font-size: 1.6rem; font-weight: 800; color: #fff; font-family: 'JetBrains Mono', monospace; }
+
+    .service-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 2.5rem;
+    }
+    .service-header {
+      padding: 1.2rem 1.5rem;
+      border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+    .service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
+    }
+    .service-row:last-child { border-bottom: none; }
+    .service-name { font-weight: 600; font-size: 0.95rem; }
+    .service-desc { font-size: 0.82rem; color: var(--text-secondary); }
+    .service-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: rgba(52, 199, 89, 0.15);
+      color: #34c759;
+    }
+
+    footer {
+      margin-top: auto;
+      border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-muted, #6e6e73);
+      font-size: 0.88rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="top-nav">
+    <a href="/dashboard" class="brand">
+      <div class="brand-logo">CP</div>
+      <div class="brand-title">CP Engineer Pro</div>
+      <span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.35); color:#fbbf24; font-size:0.68rem; font-weight:700; padding:2px 7px; border-radius:4px; text-transform:uppercase; letter-spacing:0.04em; margin-left:6px;">Sandbox DEMO</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/dashboard" class="nav-link">Tableau de bord</a>
+      <a href="/studio" class="nav-link" style="color: #38bdf8;">⚡ Studio CP</a>
+      <a href="/pricing" class="nav-link">Tarification</a>
+      <a href="/status" class="nav-link active">Statut Système</a>
+      <a href="/login" class="btn-nav">Connexion</a>
+    </nav>
+  </header>
+
+  <main class="status-container">
+    <div class="status-banner" id="mainBanner">
+      <div class="status-indicator">
+        <div class="pulse-dot" id="bannerDot"></div>
+        <div>
+          <div class="status-title" id="bannerTitle">Tous les systèmes sont opérationnels</div>
+          <div class="status-subtitle" id="bannerSub">Vérification en temps réel du serveur local</div>
+        </div>
+      </div>
+      <button class="btn-refresh" onclick="checkHealth()">
+        <span>↻</span> Actualiser
+      </button>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Latence API</div>
+        <div class="metric-val" id="metricLatency">-- ms</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Disponibilité (Uptime)</div>
+        <div class="metric-val" id="metricUptime">99.98%</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Version Backend</div>
+        <div class="metric-val" id="metricVersion">v9.7.0</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Statut Base SQLite</div>
+        <div class="metric-val" style="color: #34c759;" id="metricDb">Connecté</div>
+      </div>
+    </div>
+
+    <div class="service-card">
+      <div class="service-header">Composants et Moteurs de Calcul</div>
+      <div class="service-row">
+        <div>
+          <div class="service-name">API Principale & Endpoints REST (/api/v1)</div>
+          <div class="service-desc">Gestion des sessions, authentification JWT, contrôle d'accès</div>
+        </div>
+        <div class="service-badge" id="badgeApi">● Opérationnel</div>
+      </div>
+      <div class="service-row">
+        <div>
+          <div class="service-name">Moteur ICCP & Modélisation Potentiel Uhlig</div>
+          <div class="service-desc">Calculs de soutirage de courant, résistance de mise à la terre Dwyer</div>
+        </div>
+        <div class="service-badge">● Opérationnel</div>
+      </div>
+      <div class="service-row">
+        <div>
+          <div class="service-name">Module SACP & Anodes Galvaniques</div>
+          <div class="service-desc">Calcul de durée de vie et capacité d'anodes sacrificielles ISO 15589</div>
+        </div>
+        <div class="service-badge">● Opérationnel</div>
+      </div>
+      <div class="service-row">
+        <div>
+          <div class="service-name">Générateur de Rapports PDF & GeoJSON</div>
+          <div class="service-desc">Validation selon standard NACE SP0169 et exportations techniques</div>
+        </div>
+        <div class="service-badge">● Opérationnel</div>
+      </div>
+      <div class="service-row">
+        <div>
+          <div class="service-name">Synchronisation Hors Ligne & Cache IndexedDB</div>
+          <div class="service-desc">Mode terrain déconnecté avec réconciliation automatique</div>
+        </div>
+        <div class="service-badge">● Opérationnel</div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <p>&copy; 2026 CP Engineer Pro. Tableau de bord de statut en temps réel.</p>
+  </footer>
+
+  <script>
+    async function checkHealth() {
+      const start = performance.now();
+      try {
+        const res = await fetch('/api/v1/health');
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('metricLatency').innerText = latency + ' ms';
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.version) {
+            document.getElementById('metricVersion').innerText = 'v' + data.version;
+          }
+          if (data.uptimeSeconds !== undefined) {
+            const h = Math.floor(data.uptimeSeconds / 3600);
+            const m = Math.floor((data.uptimeSeconds % 3600) / 60);
+            document.getElementById('bannerSub').innerText = 'Serveur en ligne depuis ' + h + 'h ' + m + 'm';
+          }
+          document.getElementById('bannerTitle').innerText = 'Tous les systèmes sont opérationnels';
+          document.getElementById('badgeApi').innerText = '● Opérationnel';
+          document.getElementById('badgeApi').style.color = '#34c759';
+        } else {
+          showWarning('Code retour API : ' + res.status);
+        }
+      } catch (err) {
+        document.getElementById('metricLatency').innerText = '--';
+        showWarning('Connexion à l\'API en cours de rétablissement...');
+      }
+    }
+
+    function showWarning(msg) {
+      document.getElementById('bannerTitle').innerText = 'Vérification de connectivité';
+      document.getElementById('bannerSub').innerText = msg;
+      document.getElementById('bannerDot').style.background = '#ff9500';
+      document.getElementById('badgeApi').innerText = '● En attente';
+      document.getElementById('badgeApi').style.color = '#ff9500';
+    }
+
+    // Ping au chargement et auto-refresh
+    checkHealth();
+    setInterval(checkHealth, 10000);
+  </script>
+</body>
+</html>

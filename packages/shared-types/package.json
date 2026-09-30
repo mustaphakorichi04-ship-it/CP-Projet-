@@ -1,0 +1,13 @@
+{
+  "name": "@cp-engineer/shared-types",
+  "version": "1.0.0",
+  "description": "Shared TypeScript definitions and Zod schemas for CP Engineer SaaS",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": ["cathodic-protection", "nace", "iso-15589", "saas", "multi-tenant"],
+  "author": "CP Engineer Pro Team",
+  "license": "UNLICENSED"
+}
