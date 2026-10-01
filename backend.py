@@ -398,11 +398,12 @@ def add_security_headers(response):
     else:
         connect_src_extra = " http://localhost:5000 http://127.0.0.1:5000"
         # Environnement de test uniquement : autorise l'affichage de
-        # l'application dans l'aperçu hébergé (iframe *.e2b.app) afin de
-        # pouvoir la visualiser et la tester dans le navigateur. En
-        # production, la CSP reste stricte : frame-ancestors 'none'.
-        preview_host = os.environ.get('CP_PREVIEW_ORIGIN', 'https://*.e2b.app')
-        frame_ancestors = "'self' " + preview_host
+        # l'application dans l'aperçu hébergé (iframe) afin de pouvoir la
+        # visualiser et la tester dans le navigateur. L'ancêtre réel est le
+        # site d'aperçu (origine inconnue du backend), d'où '*' ici ; la
+        # variable CP_PREVIEW_ORIGIN permet de restreindre si besoin.
+        # En production, la CSP reste stricte : frame-ancestors 'none'.
+        frame_ancestors = os.environ.get('CP_PREVIEW_ORIGIN', '*')
 
     csp = (
         "default-src 'self'; "
@@ -417,10 +418,12 @@ def add_security_headers(response):
     )
     response.headers['Content-Security-Policy'] = csp
     response.headers['X-Content-Type-Options'] = 'nosniff'
-    # X-Frame-Options : DENY en production ; SAMEORIGIN en test (la
-    # restriction d'iframe de l'aperçu est portée par frame-ancestors,
-    # prioritaire sur X-Frame-Options dans les navigateurs modernes).
-    response.headers['X-Frame-Options'] = 'DENY' if IS_PRODUCTION else 'SAMEORIGIN'
+    # X-Frame-Options : DENY en production. En environnement de test, l'en-tête
+    # n'est PAS émis : la restriction d'iframe est portée par frame-ancestors
+    # (prioritaire dans les navigateurs modernes) et l'aperçu doit pouvoir
+    # afficher l'application depuis une origine différente.
+    if IS_PRODUCTION:
+        response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = (
         'geolocation=(self), camera=(), microphone=(), payment=(), '
