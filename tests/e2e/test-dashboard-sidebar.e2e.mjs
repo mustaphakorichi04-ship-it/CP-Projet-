@@ -118,27 +118,39 @@ for (const [, tab, libelle] of ENTREES) {
   d2.window.close();
 }
 
-// ── 6. Aucun mélange entre projets : sidebar = projet actif, cartes = leur projet ──
-const d3 = await buildDom(`${BASE}/dashboard?project=PROJ-003#projects`, 5000);
+// ── 6. « Espace de travail actif » = EXACTEMENT les projets de la base ────
+// (aucune valeur codée en dur : on compare à ce que renvoie /api/dashboard/summary,
+//  ce test fonctionne donc avec 2, 3 ou N projets selon votre cp_data.db)
+const summary = await (await fetch(`${BASE}/api/dashboard/summary`, {
+  headers: { Authorization: 'Bearer ' + login.token },
+})).json();
+const idsApi = summary.projects.map(p => p.id).sort();
+const idsSelecteur = [...(await buildDom(`${BASE}/dashboard#projects`, 5000)).window.document
+  .querySelectorAll('#workspaceSelect option')].map(o => o.value).filter(v => v !== 'sandbox_lab').sort();
+check('6. Liste déroulante = projets réellement en base', idsApi.join(', '), idsSelecteur.join(', '));
+check('6. Aucun libellé codé en dur dans la liste', false,
+  idsSelecteur.some(v => !summary.projects.some(p => p.id === v)));
+
+// ── 6-bis. Aucun mélange entre projets : sidebar et cartes = leur projet ──
+const dernierId = idsApi[idsApi.length - 1];
+const d3 = await buildDom(`${BASE}/dashboard?project=${dernierId}#projects`, 5000);
 const doc3 = d3.window.document;
-check('6. Lien Studio de la sidebar = projet actif (PROJ-003)', '/studio?project=PROJ-003#iccp',
+check(`6. Lien Studio de la sidebar = projet actif (${dernierId})`, `/studio?project=${dernierId}#iccp`,
   doc3.getElementById('navStudioIccp')?.getAttribute('href'));
 const liensSidebar = [...doc3.querySelectorAll('aside a[href*="/studio"]')].map(a => a.getAttribute('href'));
 // 6 liens : bouton « Ouvrir Studio » de l'en-tête + les 5 modules du Studio.
 check('6. Liens Studio de la sidebar contextualisés (6)', 6, liensSidebar.length);
 check('6. Aucun lien de la sidebar vers un autre projet', true,
-  liensSidebar.every(h => h.includes('project=PROJ-003')));
+  liensSidebar.every(h => h.includes(`project=${dernierId}`)));
 
 const cartes = [...doc3.querySelectorAll('#allProjectsTbody tr')];
-check('6. Cartes projets réelles affichées (3)', 3, cartes.length);
+check('6. Cartes projets réelles affichées (= base)', idsApi.length, cartes.length);
 const malCiblees = cartes.filter(tr => {
   const id = (tr.querySelector('strong')?.textContent || '').trim().split(' ')[0];
   const liens = [...tr.querySelectorAll('a[href*="/studio"]')].map(a => a.getAttribute('href'));
   return liens.length === 0 || !liens.every(h => h.includes(`project=${id}`));
 });
 check('6. Chaque carte projets cible SON projet (0 carte mal ciblée)', 0, malCiblees.length);
-check('6. Projets réels dans le sélecteur (3)', 3,
-  [...doc3.querySelectorAll('#workspaceSelect option')].filter(o => /^PROJ-00\d$/.test(o.value)).length);
 d3.window.close();
 
 const total = results.length;
