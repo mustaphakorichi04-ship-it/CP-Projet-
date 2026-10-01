@@ -855,11 +855,31 @@ const ProjectManager = (function() {
     // ============================================================
     function loadProject(projectId) {
         return new Promise(async (resolve, reject) => {
-            const projects = await StorageManager.loadProjects();
-            const project = projects.find(p => p.id === projectId);
+            let projects = await StorageManager.loadProjects();
+            let project = projects.find(p => p.id === projectId);
+
+            // ─────────────────────────────────────────────────────────
+            // Deep-link / continuité de contexte : si le projet n'existe
+            // pas encore localement mais qu'il est présent en base
+            // (ex. ouverture directe /studio?project=PROJ-002), on le
+            // charge depuis le backend puis on réessaie.
+            // ─────────────────────────────────────────────────────────
+            if (!project && typeof StorageManager.ensureProjectFromServer === 'function') {
+                try {
+                    const fetched = await StorageManager.ensureProjectFromServer(projectId);
+                    if (fetched) {
+                        projects = await StorageManager.loadProjects();
+                        project = projects.find(p => p.id === projectId);
+                    }
+                } catch (e) {
+                    console.warn('[Controller] Chargement projet depuis la base échoué:', e);
+                }
+            }
+
             if (!project) { reject('Projet introuvable'); return; }
             currentProjectId = projectId;
             localStorage.setItem('lastProjectId', projectId);
+            projectsList = projects;
 
             const migratedData = migrateGroupsToSysteme(project.data);
             project.data = migratedData;
@@ -881,6 +901,9 @@ const ProjectManager = (function() {
             if (!state.iccp.groundbedParams) state.iccp.groundbedParams = {};
             if (!state.iccp.reinforcementZones) state.iccp.reinforcementZones = [];
             if (!state.groundbeds) state.groundbeds = [];
+            // Robustesse : un projet sans systèmes (ex. projet « anodes »)
+            // ne doit pas interrompre le chargement du projet.
+            if (!Array.isArray(state.systems)) state.systems = [];
 
             // P0-05/P0-03/P1-05 : Migration des paramètres partagés
             migrateSharedParams();
@@ -1127,7 +1150,8 @@ const ProjectManager = (function() {
             return;
         }
 
-        let systemsToMigrate = state.systems.filter(sys => sys.type === 'iccp' && sys.groundbedId === null);
+        const systems = Array.isArray(state.systems) ? state.systems : [];
+        let systemsToMigrate = systems.filter(sys => sys.type === 'iccp' && sys.groundbedId === null);
         systemsToMigrate.forEach(sys => {
             const oldParams = sys.params?.groundbed || {};
             if (Object.keys(oldParams).length > 0) {
@@ -1516,8 +1540,30 @@ const ProjectManager = (function() {
 
     function getSharedParams() { return state.project.shared || {}; }
 
-    function loadProjectsList() {
-        return StorageManager.loadProjects().then(list => { projectsList = list; return list; });
+    function loadProjectsList(options) {
+        const opts = options || {};
+        return StorageManager.loadProjects().then(async list => {
+            projectsList = list;
+            // ─────────────────────────────────────────────────────────
+            // Synchronisation DB → Studio (source de vérité unique).
+            // Non bloquant / throttlé / silencieux hors ligne : la liste
+            // locale reste utilisable immédiatement.
+            // Les appels internes au bootstrap passent options.skipServer
+            // pour éviter toute attente réseau inutile.
+            // ─────────────────────────────────────────────────────────
+            if (!opts.skipServer &&
+                typeof StorageManager.hydrateProjectsFromServer === 'function') {
+                try {
+                    const result = await StorageManager.hydrateProjectsFromServer({ force: !!opts.forceHydration });
+                    if (result && result.changed) {
+                        projectsList = await StorageManager.loadProjects();
+                    }
+                } catch (e) {
+                    console.warn('[Controller] Hydratation serveur ignorée:', e);
+                }
+            }
+            return projectsList;
+        });
     }
 
     // ============================================================

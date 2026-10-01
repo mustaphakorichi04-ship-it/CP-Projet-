@@ -49,10 +49,20 @@ export default function App() {
         {/* Alias pour compatibilité avec les anciens liens /app/login */}
         <Route path="/app/login" element={<LoginPage />} />
 
-        {/* ── Dashboard (Phase 12) ── */}
+        {/* ── Dashboard (Phase 12) ──
+             Chaque section est une route réelle : le refresh, le partage
+             de lien et le bouton retour fonctionnent (le projet actif est
+             porté par ?project=<ID>). */}
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/dashboard/projects" element={<DashboardPage />} />
+        <Route path="/dashboard/calculations" element={<DashboardPage />} />
+        <Route path="/dashboard/gis" element={<DashboardPage />} />
+        <Route path="/dashboard/reports" element={<DashboardPage />} />
+        <Route path="/dashboard/settings" element={<DashboardPage />} />
         {/* Alias /app/dashboard */}
         <Route path="/app/dashboard" element={<DashboardPage />} />
+        <Route path="/app/dashboard/*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard/*" element={<Navigate to="/dashboard" replace />} />
 
         {/* ── Facturation (Phase 9) ── */}
         <Route path="/app/billing" element={<BillingDashboard />} />

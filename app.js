@@ -1919,9 +1919,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const currentProjectId = ProjectManager.getCurrentProjectId();
                 if (currentProjectId) {
                     const freshEquipments = await StorageManager.loadEquipmentsForProject(currentProjectId, true);
-                    if (freshEquipments) {
+                    // Ne jamais écraser une liste non vide par une lecture
+                    // locale vide (base pas encore hydratée) — sinon le
+                    // tableau « Équipements » se vide pour un projet peuplé.
+                    if (freshEquipments && (freshEquipments.length > 0 || ProjectManager.getState().equipments.length === 0)) {
                         ProjectManager.getState().equipments = freshEquipments;
                         Logger.info(`[App] Équipements rechargés depuis IndexedDB: ${freshEquipments.length}`);
+                    } else {
+                        Logger.warn('[App] Lecture locale vide ignorée — équipements en mémoire conservés.');
                     }
                     const freshMeasurements = await StorageManager.loadFieldMeasurementsForProject(currentProjectId);
                     if (freshMeasurements) ProjectManager.getState().fieldMeasurements = freshMeasurements;

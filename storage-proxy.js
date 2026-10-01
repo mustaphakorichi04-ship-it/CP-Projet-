@@ -564,6 +564,9 @@
             if (window.UI && typeof window.UI.showToast === 'function') {
                 window.UI.showToast(`✅ Connecté en tant que ${username}`, 'success');
             }
+            // Session établie : la liste des projets de la base doit être
+            // disponible immédiatement (deep-link et sélecteur).
+            scheduleProjectsHydration();
             _responseCache.clear();
             return data;
         } catch (error) {
@@ -628,7 +631,7 @@
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    async function fetchWithRetry(url, options = {}, maxAttempts = RETRY_CONFIG.maxAttempts) {
+    async function fetchWithRetry(url, options = {}, maxAttempts = RETRY_CONFIG.maxAttempts, opts = {}) {
         let lastError = null;
         let lastResponse = null;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -657,6 +660,9 @@
             }
         }
         if (lastResponse && lastResponse.status >= 400 && lastResponse.status < 500) {
+            // Certains appels doivent inspecter le code client (ex. 409 =
+            // « existe déjà » → basculement en mise à jour).
+            if (opts.returnClientError) return lastResponse;
             throw new Error(`Erreur client (${lastResponse.status})`);
         }
         throw new Error(`Échec après ${maxAttempts} tentatives: ${
@@ -678,6 +684,36 @@
     //   - Le mode hors ligne reste fonctionnel si le serveur est réellement
     //     injoignable (timeout, 5xx, erreur réseau).
     // ============================================================
+    let _hydrateOnAvailabilityTimer = null;
+
+    /**
+     * Hydratation différée de la liste des projets.
+     *
+     * Le bootstrap du Studio peut se terminer AVANT que le backend soit
+     * joignable (ou avant la restauration du jeton) : la liste des projets
+     * reste alors vide et un deep-link /studio?project=<ID> échoue.
+     * Cette hydratation unique, déclenchée quand la base redevient
+     * joignable, répare cet état sans recharger la page.
+     */
+    function scheduleProjectsHydration() {
+        if (_hydrateOnAvailabilityTimer) return;
+        _hydrateOnAvailabilityTimer = setTimeout(async () => {
+            _hydrateOnAvailabilityTimer = null;
+            try {
+                if (!isAuthenticated()) return;
+                if (typeof StorageManager.hydrateProjectsFromServer !== 'function') return;
+                const result = await StorageManager.hydrateProjectsFromServer({ force: true });
+                if (result && result.changed &&
+                    window.ProjectManager &&
+                    typeof window.ProjectManager.loadProjectsList === 'function') {
+                    await window.ProjectManager.loadProjectsList({ skipServer: true });
+                }
+            } catch (e) {
+                console.debug('[Proxy] Hydratation différée ignorée:', e);
+            }
+        }, 300);
+    }
+
     async function checkBackend() {
         if (IS_FILE_CONTEXT) return false;
         try {
@@ -703,6 +739,7 @@
                     notifyBackendUnavailable();
                 } else {
                     notifyBackendAvailable();
+                    scheduleProjectsHydration();
                 }
             }
             return available;
@@ -808,39 +845,55 @@
         // ─────────────────────────────────────────────────────────
         // FIX 404 : le endpoint GET /api/equipments/<id> n'existe PAS
         // dans backend.py (seuls POST /api/equipments et PUT/DELETE
-        // /api/equipments/<id> sont exposés). On détecte le 404 comme
-        // "équipement absent" et on POST directement, sans tenter un
+        // /api/equipments/<id> sont exposés). On POST directement, sans
         // GET préalable qui échoue systématiquement.
+        //
+        // FIX 409 : fetchWithRetry levait une exception sur tout 4xx, si
+        // bien que le repli « 409 → PUT » était inatteignable : un
+        // équipement déjà présent en base ne pouvait jamais être mis à
+        // jour (la synchro échouait et le studio passait hors ligne).
         // ─────────────────────────────────────────────────────────
         try {
-            // Étape 1 : tentative de création directe (POST).
-            //   - 201 → créé
-            //   - 409 → existe déjà → basculer sur PUT
-            //   - 404 → projet parent manquant → vérifier côté projet
-            let response = await fetchWithRetry(`${API_BASE_URL}/equipments`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(equipment)
-            }, 2);
-
-            if (response.status === 409) {
-                // Équipement déjà existant → mise à jour
-                const updateResponse = await fetchWithRetry(`${API_BASE_URL}/equipments/${equipment.id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(equipment)
-                }, 2);
-                if (!updateResponse.ok) {
-                    throw new Error(`Erreur mise à jour: ${updateResponse.status}`);
-                }
-            } else if (!response.ok && response.status !== 201) {
-                throw new Error(`Erreur création: ${response.status}`);
-            }
+            await upsertEquipmentOnServer(equipment);
             return true;
         } catch (e) {
             console.warn(`[Proxy] Erreur sync équipement ${equipment.id}:`, e);
             throw e;
         }
+    }
+
+    /**
+     * Crée l'équipement côté base ; s'il existe déjà (409), le met à jour.
+     * @param {object} equipment
+     * @returns {Promise<boolean>}
+     */
+    async function upsertEquipmentOnServer(equipment) {
+        const postResponse = await fetchWithRetry(`${API_BASE_URL}/equipments`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(equipment)
+        }, 2, { returnClientError: true });
+
+        if (postResponse.status === 409) {
+            const updateResponse = await fetchWithRetry(
+                `${API_BASE_URL}/equipments/${encodeURIComponent(equipment.id)}`,
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(equipment)
+                },
+                2,
+                { returnClientError: true }
+            );
+            if (!updateResponse.ok) {
+                throw new Error(`Erreur mise à jour: ${updateResponse.status}`);
+            }
+            return true;
+        }
+        if (!postResponse.ok && postResponse.status !== 201) {
+            throw new Error(`Erreur création: ${postResponse.status}`);
+        }
+        return true;
     }
 
     // ============================================================
@@ -856,18 +909,9 @@
 
             if (!wasInSave && _isBackendAvailable && isAuthenticated()) {
                 try {
-                    const response = await fetchWithRetry(`${API_BASE_URL}/equipments`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(equipment)
-                    }, RETRY_CONFIG.maxAttempts);
-                    if (!response.ok) {
-                        const text = await response.text();
-                        console.warn('[Proxy] Erreur sauvegarde backend:', text);
-                    } else {
-                        _lastSyncData = equipment;
-                        _lastSyncTimestamp = Date.now();
-                    }
+                    await upsertEquipmentOnServer(equipment);
+                    _lastSyncData = equipment;
+                    _lastSyncTimestamp = Date.now();
                 } catch (e) {
                     console.warn('[Proxy] Erreur sauvegarde backend (après retry):', e);
                     if (e.message && e.message.includes('session expirée')) {
@@ -986,6 +1030,23 @@
                             return result;
                         });
 
+                        // Persistance locale des équipements lus en base.
+                        // Sans cette écriture, toute relecture forcée depuis
+                        // le stockage local renvoyait une liste vide : le
+                        // tableau « Équipements » se vidait (et le mode hors
+                        // ligne était incomplet) pour un projet pourtant peuplé.
+                        // `originalSaveEquipment` est la voie locale pure :
+                        // aucun appel API, donc aucune boucle de synchronisation.
+                        if (equipments.length > 0 && typeof originalSaveEquipment === 'function') {
+                            for (const equipment of equipments) {
+                                try {
+                                    await originalSaveEquipment.call(StorageManager, equipment);
+                                } catch (e) {
+                                    console.debug('[Proxy] Persistance locale équipement ignorée:', equipment.id, e);
+                                }
+                            }
+                        }
+
                         try {
                             if (window.StorageManager && window.StorageManager._memoryCache) {
                                 window.StorageManager._memoryCache.equipments.set(projectId, equipments);
@@ -1007,7 +1068,11 @@
             }
         }
 
-        const result = await originalLoadEquipmentsForProject.call(this, projectId, forceRefresh);
+        // Sauvegarde interne en cours (ou base injoignable) : une relecture
+        // locale forcée renverrait une liste vide alors que les équipements
+        // viennent d'être hydratés en mémoire. On s'appuie sur le cache.
+        const effectiveForceRefresh = isInternalSave() ? false : forceRefresh;
+        const result = await originalLoadEquipmentsForProject.call(this, projectId, effectiveForceRefresh);
         return result;
     };
 
@@ -1191,6 +1256,190 @@
             endInternalSave();
             _syncInProgress = false;
         }
+    };
+
+    // ============================================================
+    // 9-bis. HYDRATATION DB → STUDIO (source de vérité projets)
+    // ============================================================
+    // Le Studio est offline-first : sa liste de projets provient
+    // d'IndexedDB. Sans hydratation, un projet réellement présent
+    // en base (ex. PROJ-002) n'apparaît pas dans le sélecteur et
+    // un deep-link /studio?project=PROJ-002 échoue silencieusement.
+    //
+    // Règles de fusion (NON DESTRUCTIVES) :
+    //   - projet absent en local               → ajouté
+    //   - projet local plus ancien que le serveur → données serveur adoptées
+    //   - projet local plus récent             → conservé tel quel
+    //   - aucune suppression n'est jamais effectuée ici
+    // ============================================================
+    const HYDRATION_THROTTLE_MS = 60000;
+    let _lastHydrationAt = 0;
+
+    function _serverTimestampMs(isoString) {
+        if (!isoString) return 0;
+        const ts = Date.parse(isoString);
+        return Number.isFinite(ts) ? ts : 0;
+    }
+
+    function _localTimestampMs(project) {
+        if (!project) return 0;
+        if (Number.isFinite(project._lastModified)) return project._lastModified;
+        return _serverTimestampMs(project.updatedAt);
+    }
+
+    StorageManager.fetchProjectsFromServer = async function() {
+        // Seule l'authentification conditionne la lecture : l'indicateur
+        // _isBackendAvailable peut être obsolète (mis à false par un 4xx
+        // transitoire) et bloquait alors définitivement la liste des projets.
+        if (!isAuthenticated()) return null;
+        try {
+            const response = await fetchWithRetry(
+                `${API_BASE_URL}/projects?limit=100`,
+                { method: 'GET' },
+                RETRY_CONFIG.maxAttempts
+            );
+            if (!response.ok) {
+                console.debug('[Proxy] fetchProjectsFromServer HTTP', response.status);
+                return null;
+            }
+            _isBackendAvailable = true; // une lecture réussie prouve la disponibilité
+            const payload = await response.json();
+            return (payload && Array.isArray(payload.items)) ? payload.items : null;
+        } catch (e) {
+            console.warn('[Proxy] fetchProjectsFromServer échoué:', e);
+            return null;
+        }
+    };
+
+    StorageManager.fetchProjectFromServer = async function(projectId) {
+        if (!projectId || !isAuthenticated()) return null;
+        try {
+            const response = await fetchWithRetry(
+                `${API_BASE_URL}/projects/${encodeURIComponent(projectId)}`,
+                { method: 'GET' },
+                RETRY_CONFIG.maxAttempts
+            );
+            if (!response.ok) {
+                console.debug('[Proxy] fetchProjectFromServer HTTP', response.status, projectId);
+                return null;
+            }
+            const row = await response.json();
+            return (row && row.id) ? row : null;
+        } catch (e) {
+            console.warn('[Proxy] fetchProjectFromServer échoué:', e);
+            return null;
+        }
+    };
+
+    /**
+     * Fusionne un projet serveur dans IndexedDB/localStorage.
+     * @returns {Promise<boolean>} true si le stockage local a été modifié.
+     */
+    StorageManager.mergeServerProject = async function(row) {
+        if (!row || !row.id || !row.data || typeof row.data !== 'object') return false;
+
+        const localList = await StorageManager.loadProjects() || [];
+        const existing = localList.find(p => p.id === row.id);
+
+        if (existing) {
+            const serverTs = _serverTimestampMs(row.updated_at);
+            const localTs = _localTimestampMs(existing);
+            if (!(serverTs > localTs)) {
+                return false; // version locale plus récente → conservée
+            }
+        }
+
+        const project = {
+            id: row.id,
+            name: row.name || row.id,
+            type: row.type || 'mixte',
+            createdAt: row.created_at || new Date().toISOString(),
+            updatedAt: row.updated_at || new Date().toISOString(),
+            _lastModified: _serverTimestampMs(row.updated_at) || Date.now(),
+            _version: StorageManager.STORAGE_VERSION,
+            data: row.data
+        };
+
+        // Écriture strictement locale : pas de PUT de retour vers le serveur.
+        const wasInSave = isInternalSave();
+        if (!wasInSave) beginInternalSave();
+        try {
+            await originalSaveProject.call(StorageManager, project);
+        } finally {
+            if (!wasInSave) endInternalSave();
+        }
+        return true;
+    };
+
+    /**
+     * Hydrate la liste locale depuis la base (backend).
+     * @param {{force?: boolean}} [options]
+     * @returns {Promise<{changed: boolean, merged: number}>}
+     */
+    StorageManager.hydrateProjectsFromServer = async function(options) {
+        const force = !!(options && options.force);
+        const now = Date.now();
+        if (!force && (now - _lastHydrationAt) < HYDRATION_THROTTLE_MS) {
+            return { changed: false, merged: 0 };
+        }
+        if (!isAuthenticated()) {
+            return { changed: false, merged: 0 };
+        }
+
+        const rows = await StorageManager.fetchProjectsFromServer();
+        if (!rows) return { changed: false, merged: 0 };
+
+        const localList = await StorageManager.loadProjects() || [];
+        const localById = new Map(localList.map(p => [p.id, p]));
+        let merged = 0;
+
+        for (const row of rows) {
+            if (!row || !row.id) continue;
+            const existing = localById.get(row.id);
+            const serverTs = _serverTimestampMs(row.updated_at);
+            const needsFullCopy = !existing || (serverTs > _localTimestampMs(existing));
+            if (!needsFullCopy) continue;
+
+            const full = await StorageManager.fetchProjectFromServer(row.id);
+            if (!full || !full.data) continue;
+
+            const changed = await StorageManager.mergeServerProject(full);
+            if (changed) merged++;
+        }
+
+        _lastHydrationAt = now;
+
+        if (merged > 0) {
+            console.log(`[Proxy] Hydratation DB → Studio : ${merged} projet(s) synchronisé(s).`);
+            _emitDataSynced({ type: 'projectsHydrated', count: merged });
+            document.dispatchEvent(new CustomEvent('projectsHydrated', {
+                detail: { count: merged }
+            }));
+        }
+
+        return { changed: merged > 0, merged };
+    };
+
+    /**
+     * Garantit la présence locale d'un projet identifié (deep-link).
+     * @returns {Promise<boolean>} true si le projet est disponible localement.
+     */
+    StorageManager.ensureProjectFromServer = async function(projectId) {
+        if (!projectId) return false;
+        const localList = await StorageManager.loadProjects() || [];
+        if (localList.some(p => p.id === projectId)) return true;
+
+        const full = await StorageManager.fetchProjectFromServer(projectId);
+        if (!full || !full.data) return false;
+
+        const merged = await StorageManager.mergeServerProject(full);
+        if (merged) {
+            console.log(`[Proxy] Projet ${projectId} chargé depuis la base (deep-link).`);
+            document.dispatchEvent(new CustomEvent('projectsHydrated', {
+                detail: { count: 1, projectId }
+            }));
+        }
+        return merged;
     };
 
     // ============================================================

@@ -3971,12 +3971,25 @@ const UI = (function() {
         }
 
         // Sélection
+        // Priorité : valeur courante explicite → projet actif de l'application
+        // → « Tous les projets » → dernier projet utilisé → premier projet.
+        // Un « __all__ » résiduel ne doit jamais écraser un projet actif
+        // (le contexte de deep-link /studio?project=<ID> était sinon perdu
+        // lors des repopulations tardives du sélecteur).
         let selectedId = null;
-        if (currentVal && (currentVal === '__all__' || projects.some(p => p.id === currentVal))) {
+        const urlProjectId = (window.StudioRouter &&
+            typeof window.StudioRouter.parseStudioRoute === 'function')
+            ? (window.StudioRouter.parseStudioRoute(window.location.search, window.location.hash) || {}).projectId
+            : null;
+        const activeProjectId = ProjectManager.getCurrentProjectId();
+        if (currentVal && currentVal !== '__all__' && projects.some(p => p.id === currentVal)) {
             selectedId = currentVal;
-        } else if (ProjectManager.getCurrentProjectId() &&
-                   projects.some(p => p.id === ProjectManager.getCurrentProjectId())) {
-            selectedId = ProjectManager.getCurrentProjectId();
+        } else if (activeProjectId && projects.some(p => p.id === activeProjectId)) {
+            selectedId = activeProjectId;
+        } else if (urlProjectId && projects.some(p => p.id === urlProjectId)) {
+            selectedId = urlProjectId;
+        } else if (currentVal === '__all__') {
+            selectedId = '__all__';
         } else if (projects.length > 0) {
             const lastId = localStorage.getItem('lastProjectId');
             if (lastId && projects.some(p => p.id === lastId)) {
@@ -6200,6 +6213,12 @@ const UI = (function() {
             }, 300);
         }
         if (window.innerWidth <= 768) getDomElement('sidebar')?.classList.remove('open');
+
+        // Sync inter-modules : les modules abonnés (auto-sélection de
+        // système, boucle de rendu 3D, etc.) attendent cet événement.
+        document.dispatchEvent(new CustomEvent('moduleChanged', {
+            detail: { moduleId: moduleId }
+        }));
     }
 
     function setupSidebar() {
@@ -6683,6 +6702,13 @@ const UI = (function() {
 
         initTheme();
         setupNavigation();
+
+        // Hydratation DB → Studio (storage-proxy) : la liste des projets
+        // change → on rafraîchit le sélecteur sans recharger la page.
+        document.addEventListener('projectsHydrated', function() {
+            populateProjectSelector();
+        });
+
         setupSidebar();
         updateDate();
         setupManualOverrides();
@@ -7923,6 +7949,8 @@ const UI = (function() {
         refreshAssetDropdownForFieldMeas,
         updateCorrosivity,
         populateProjectSelector,
+        // Navigation inter-modules (deep-link /studio#<module> + router URL)
+        switchModule,
         populateGroundbedProjectSelect,
         populateInterferenceProjectSelect,
         populatePipelineSelects,

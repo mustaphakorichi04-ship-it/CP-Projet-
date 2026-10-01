@@ -61,8 +61,13 @@
 <script src="vendor/xlsx/0.18.5/xlsx.full.min.js"
         integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"
         crossorigin="anonymous"></script>
+   <!-- SRI multi-provenance : la 1re empreinte est celle du fichier minifié
+        publié par le CDN (chart.umd.min.js), la 2de celle du paquet npm
+        officiel chart.js@4.4.0 (chart.umd.js). Le navigateur accepte le
+        fichier si AU MOINS une empreinte correspond : le SRI reste donc
+        actif quelle que soit la provenance du fichier vendorisé. -->
    <script src="vendor/chart.js/4.4.0/chart.umd.min.js"
-        integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
+        integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g sha384-FcQlsUOd0TJjROrBxhJdUhXTUgNJQxTMcxZe6nHbaEfFL1zjQ+bq/uRoBQxb0KMo"
         crossorigin="anonymous" defer></script>
 <script src="vendor/jspdf/2.5.1/jspdf.umd.min.js"
         integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk"
@@ -2706,6 +2711,57 @@
                 <button id="confirmMapPoint" class="btn btn-primary touch-target">Ajouter</button>
                 <button id="cancelMapPoint" class="btn btn-secondary touch-target">Annuler</button>
             </div>
+
+        <!-- ========================================================== -->
+        <!-- MODULE HISTORIQUE (conteneur manquant : l'entrée de menu    -->
+        <!-- « Historique » ne menait à aucun module → page vide)        -->
+        <!-- Rendu par ui.js : refreshHistoryTable() / loadHistory()     -->
+        <!-- ========================================================== -->
+        <div id="module-history" class="module" data-module="history">
+            <div class="module-header">
+                <h1><i class="fas fa-history" aria-hidden="true"></i> Historique</h1>
+                <p>Journal des calculs et des actions enregistrés pour le projet actif</p>
+            </div>
+            <div class="card">
+                <div class="card-header" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+                    <h3 style="margin:0;"><i class="fas fa-list" aria-hidden="true"></i> Entrées d'historique</h3>
+                    <label for="historyFilterModule" style="margin-left:auto; font-weight:600; color:var(--text-secondary);">Module :</label>
+                    <select id="historyFilterModule" class="tech-form" style="width:auto;">
+                        <option value="all">Tous les modules</option>
+                        <option value="cp">Calcul CP</option>
+                        <option value="iccp">Système ICCP</option>
+                        <option value="groundbed">Groundbed</option>
+                        <option value="equipements">Équipements</option>
+                        <option value="fieldmeas">Mesures terrain</option>
+                        <option value="rectifier">Redresseur</option>
+                        <option value="system">Système</option>
+                    </select>
+                    <button id="clearHistoryBtn" class="btn btn-sm btn-danger touch-target" aria-label="Effacer l'historique du projet">
+                        <i class="fas fa-trash" aria-hidden="true"></i> Effacer
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="table-container">
+                        <table class="tech-table" aria-label="Historique du projet actif">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Date</th>
+                                    <th scope="col">Module</th>
+                                    <th scope="col">Projet</th>
+                                    <th scope="col">Système</th>
+                                    <th scope="col">Action</th>
+                                    <th scope="col">Résultat</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyTableBody">
+                                <tr><td colspan="6">Aucun historique disponible</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         </div>
     </div>
 
@@ -2770,12 +2826,12 @@
 
     <!-- Modules socles (ordre strict) -->
     <script src="engine.js?v=20260916-2" defer></script>
-    <script src="storage.js" defer></script>
-    <script src="storage-proxy.js" defer></script>
+    <script src="storage.js?v=20260930-1" defer></script>
+    <script src="storage-proxy.js?v=20260930-1" defer></script>
     <script src="geoUtils.js" defer></script>
     <script src="coordUtils.js" defer></script>
     <script src="gpsConverter.js" defer></script>
-    <script src="controller.js?v=20260917-1" defer></script>
+    <script src="controller.js?v=20260930-1" defer></script>
 
     <!-- ✅ v9.3 : NOUVEAU MODULE dataResolver.js -->
     <!-- Placé après controller.js et avant ui.js -->
@@ -2786,7 +2842,7 @@
     <script src="offline-sync.js" defer></script>
 
     <!-- UI et façade de contrôle -->
-    <script src="ui.js?v=20260917-3" defer></script>
+    <script src="ui.js?v=20260930-1" defer></script>
     <script src="gisIntegration.js" defer></script>
     <script src="errorManager.js" defer></script>
     <script src="cp-controller.js?v=20260917-1" defer></script>
@@ -2816,24 +2872,13 @@
     <!-- SCRIPTS DE GESTION DES ÉVÉNEMENTS 3D (externalisé pour CSP) -->
     <!-- ========================================================== -->
     <script src="app-3d-events.js" defer></script>
-    <script>
-        // Support direct deep-linking from SaaS Dashboard (e.g. /studio#iccp)
-        window.addEventListener('DOMContentLoaded', () => {
-            const checkHash = () => {
-                const hash = window.location.hash.replace('#', '');
-                if (hash && window.CPController && typeof window.CPController.switchModule === 'function') {
-                    window.CPController.switchModule(hash);
-                } else if (hash && window.UI && typeof window.UI.switchModule === 'function') {
-                    window.UI.switchModule(hash);
-                }
-            };
-            setTimeout(checkHash, 400);
-            setTimeout(checkHash, 1200);
-            window.addEventListener('hashchange', checkHash);
-        });
-    </script>
-</body>
-</html>
 
+    <!-- ========================================================== -->
+    <!-- ROUTEUR DE NAVIGATION (deep-link + continuité projectId)   -->
+    <!-- /studio?project=PROJ-001#iccp                              -->
+    <!-- Doit être chargé APRÈS ui.js / app.js (dépendances        -->
+    <!-- ProjectManager, UI.switchModule).                          -->
+    <!-- ========================================================== -->
+    <script src="router.js" defer></script>
 </body>
 </html>
