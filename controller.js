@@ -1405,6 +1405,13 @@ const ProjectManager = (function() {
             await StorageManager.saveProject(newProject);
             await loadProjectsList();
 
+            // Synchronisation auto : garantit que le nouveau projet remonte
+            // au serveur (visible dans le Dashboard), même si la sauvegarde
+            // initiale a eu lieu backend indisponible.
+            if (typeof StorageManager.pushProjectsToBackend === 'function') {
+                StorageManager.pushProjectsToBackend({ silent: true }).catch(() => {});
+            }
+
             const systems = getSystems();
             if (systems.length === 0) {
                 createSystem('Système principal', 'mixte');
@@ -1413,6 +1420,122 @@ const ProjectManager = (function() {
                 window.CPController.syncSurfaceFromEquipments();
             }
             resolve(newProject);
+        });
+    }
+
+    // ============================================================
+    // MISE À JOUR DU PROJET ACTIF (bouton « Modifier le projet »)
+    // ------------------------------------------------------------
+    // Modifie l'ID Projet (unique), le nom et le type de protection
+    // cathodique (cpSystemType) du projet courant.
+    //
+    // Comportement :
+    //   · ID inchangé  → mise à jour de state.project + saveCurrentProject().
+    //   · ID modifié   → ré-indexation sûre : les équipements, mesures
+    //     terrain et points carto sont re-keyés sur le nouvel ID, le
+    //     projet est ré-enregistré sous le nouvel ID, puis l'ancien
+    //     enregistrement projet est supprimé (sans perte de données).
+    //
+    // Aucune autre logique métier n'est touchée.
+    // ============================================================
+    function updateCurrentProject(newIdRaw, newNameRaw, newType) {
+        return new Promise(async (resolve, reject) => {
+            try {
+                if (!currentProjectId) { reject('Aucun projet actif à modifier.'); return; }
+
+                const newId = String(newIdRaw || '').trim();
+                const newName = String(newNameRaw || '').trim();
+                if (!newId) { reject('ID projet requis.'); return; }
+                if (!newName) { reject('Nom du projet requis.'); return; }
+                if (!['iccp', 'anodes', 'mixte'].includes(newType)) {
+                    reject('Type de protection invalide.'); return;
+                }
+
+                const oldId = currentProjectId;
+                const idChanged = (newId !== oldId);
+
+                // Garde-fou d'unicité : l'ID cible ne doit pas appartenir
+                // à un AUTRE projet déjà existant.
+                if (idChanged) {
+                    await loadProjectsList();
+                    const clash = projectsList.find(p => p.id === newId);
+                    if (clash) { reject('Cet ID projet existe déjà.'); return; }
+                }
+
+                // 1. Mise à jour de l'état courant (nom + type + id).
+                if (!state.project) state.project = {};
+                state.project.name = newName;
+                state.project.cpSystemType = newType;
+
+                // 2. Persistance.
+                if (!idChanged) {
+                    // Cas simple : seul le nom/type change. currentProjectId
+                    // reste l'ancien ID ; saveCurrentProject() reconstruit
+                    // l'enregistrement depuis state.project.
+                    await saveCurrentProject();
+                } else {
+                    // Cas ré-indexation : ré-enregistrer sous le nouvel ID
+                    // puis supprimer l'ancien enregistrement projet.
+                    const projectRecord = {
+                        id: newId,
+                        name: newName,
+                        type: newType,
+                        createdAt: state.project.createdAt || new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
+                        data: Utils.deepClone(state)
+                    };
+                    await StorageManager.saveProject(projectRecord);
+
+                    // Ré-indexation des enfants (projectId : ancien → nouveau).
+                    const rekeyChildren = async () => {
+                        try {
+                            const equipments = await StorageManager.loadEquipmentsForProject(oldId);
+                            for (const eq of equipments) {
+                                eq.projectId = newId;
+                                await StorageManager.saveEquipment(eq);
+                            }
+                            const measurements = await StorageManager.loadFieldMeasurementsForProject(oldId);
+                            for (const m of measurements) {
+                                m.projectId = newId;
+                                await StorageManager.saveFieldMeasurement(m);
+                            }
+                            const mapPoints = await StorageManager.loadMapPoints(oldId);
+                            for (const p of mapPoints) {
+                                p.projectId = newId;
+                                await StorageManager.saveMapPoint(p);
+                            }
+                        } catch (e) {
+                            console.warn('[ProjectManager] Ré-indexation enfants partielle:', e);
+                        } finally {
+                            // Purge du cache enfant obsolète sous l'ancien ID
+                            // (les objets ont été ré-indexés sur le nouvel ID).
+                            try { StorageManager.invalidateCache(oldId); } catch (e2) { /* sans objet */ }
+                        }
+                    };
+                    await rekeyChildren();
+
+                    // Suppression du SEUL ancien enregistrement projet.
+                    // (les enfants ont déjà été ré-indexés sur le nouvel
+                    //  ID → on ne doit PAS les supprimer.)
+                    await StorageManager.deleteProjectRecord(oldId);
+
+                    // Bascule du projet courant + persistance localStorage.
+                    currentProjectId = newId;
+                    localStorage.setItem('lastProjectId', newId);
+                }
+
+                // 3. Rafraîchir la liste + recharger le projet pour
+                //    resynchroniser l'état (equipments, systèmes, caches).
+                await loadProjectsList();
+                invalidateSurfaceCache();
+                invalidateSystemCurrentCache();
+                await loadProject(currentProjectId);
+
+                resolve({ id: currentProjectId, name: newName, type: newType, idChanged });
+            } catch (err) {
+                console.error('Erreur updateCurrentProject:', err);
+                reject(err && err.message ? err.message : 'Erreur mise à jour projet');
+            }
         });
     }
 
@@ -2000,6 +2123,7 @@ const ProjectManager = (function() {
         loadProject,
         saveCurrentProject,
         createNewProject,
+        updateCurrentProject,
         deleteCurrentProject,
         loadProjectsList,
         migrateGroupsToSysteme,

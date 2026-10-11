@@ -1,24 +1,31 @@
 // ============================================================
 // sw.js — CP Engineer Pro PWA Service Worker
 // Cache Offline-First & Background Sync (NACE Engineering)
-// v9.8 — Network-First pour HTML (dashboard toujours à jour)
+// v9.10 — Network-First pour HTML et invalidation des anciens assets
 // ============================================================
 
-const CACHE_VERSION = 'cp-engineer-v9.8-cache';
+const CACHE_VERSION = 'cp-engineer-v9.23-cache';
+
+
+
+
+
 
 // Assets statiques JS/CSS mis en cache (pas les pages HTML !)
 const STATIC_ASSETS = [
-  './style.css',
-  './engine.js',
-  './ui.js',
-  './app.js',
-  './controller.js',
-  './cp-controller.js',
-  './storage.js',
+  './style.css?v=20261010-1',
+  './engine.js?v=20261009-3',
+  './ui.js?v=20261011-1',
+  './app.js?v=20261002-2',
+  './controller.js?v=20261011-1',
+  './cp-controller.js?v=20261009-3',
+  './storage.js?v=20261010-1',
+  './storage-proxy.js?v=20261011-1',
   './manifest.json',
   './acCorrosionEngine.js',
   './cableLengthEngine.js',
-  './ICCPOptimizationEngine.js'
+  './ICCPOptimizationEngine.js?v=20261010-1',
+  './AnodesOptimizationEngine.js?v=20261010-1'
 ];
 
 // Pages HTML toujours servies depuis le réseau (Network-First)
@@ -28,7 +35,7 @@ const HTML_PAGES = ['/', '/dashboard', '/studio', '/pricing', '/status', '/login
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_VERSION).then((cache) => {
-      console.log('[SW v9.8] Mise en cache des assets statiques JS/CSS...');
+      console.log('[SW v9.10] Mise en cache des assets statiques JS/CSS...');
       return cache.addAll(STATIC_ASSETS).catch((err) => {
         console.warn('[SW] Assets non critiques non mis en cache:', err);
       });
@@ -42,7 +49,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.filter((key) => key !== CACHE_VERSION).map((key) => {
-          console.log('[SW v9.8] Suppression ancien cache:', key);
+          console.log('[SW v9.10] Suppression ancien cache:', key);
           return caches.delete(key);
         })
       );
@@ -54,6 +61,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   const pathname = url.pathname;
+
+  // ── Cross-origin (CDN, Google Fonts, extensions navigateur…) : ──
+  // Ne JAMAIS intercepter. Un fetch() exécuté depuis le Service Worker
+  // est soumis au connect-src de la page (=> blocage CSP pour
+  // fonts.googleapis.com), et cache.put() échoue sur les schémas non
+  // supportés (ex. chrome-extension://).
+  if (url.origin !== self.location.origin) return;
 
   // ── API : toujours réseau, jamais de cache ──
   if (pathname.startsWith('/api/')) {
@@ -89,9 +103,11 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request).then((networkResponse) => {
-        if (networkResponse && networkResponse.status === 200) {
+        if (networkResponse && networkResponse.status === 200 && event.request.method === 'GET') {
           const clone = networkResponse.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put(event.request, clone));
+          caches.open(CACHE_VERSION)
+            .then((cache) => cache.put(event.request, clone))
+            .catch(() => {});
         }
         return networkResponse;
       }).catch(() => cachedResponse);
@@ -115,16 +131,3 @@ self.addEventListener('sync', (event) => {
   }
 });
 
-// 4. Background Sync : rejouer les calculs au rétablissement du réseau
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'sync-cp-calculations') {
-    console.log('[SW] Événement Background Sync reçu: déclenchement de la synchronisation...');
-    event.waitUntil(
-      self.clients.matchAll().then((clients) => {
-        clients.forEach((client) => {
-          client.postMessage({ type: 'TRIGGER_BACKGROUND_SYNC' });
-        });
-      })
-    );
-  }
-});

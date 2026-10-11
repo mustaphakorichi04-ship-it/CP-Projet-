@@ -560,6 +560,14 @@
                 setToken(data.token, data.user_id, data.role);
             }
 
+            // ⭐ PULL-BOOTSTRAP : après authentification, tirer les
+            // projets/équipements du serveur vers le stockage local
+            // (rend les données visibles même sur un navigateur vierge).
+            setTimeout(() => {
+                pullProjectsFromBackend({ silent: false }).catch(e =>
+                    console.warn('[Proxy] Pull après login:', e));
+            }, 1200);
+
             console.log('[Proxy] Authentification réussie pour', username);
             if (window.UI && typeof window.UI.showToast === 'function') {
                 window.UI.showToast(`✅ Connecté en tant que ${username}`, 'success');
@@ -617,6 +625,57 @@
 
     let _lastSyncData = null;
     let _lastSyncTimestamp = 0;
+    const _projectVersions = new Map();
+    try {
+        const savedVersions = JSON.parse(localStorage.getItem('cp_project_versions') || '{}');
+        for (const [projectId, version] of Object.entries(savedVersions)) {
+            if (Number.isInteger(version) && version >= 1) _projectVersions.set(projectId, version);
+        }
+    } catch (e) {}
+    let _conflictedProjects = new Set();
+    try {
+        _conflictedProjects = new Set(JSON.parse(localStorage.getItem('cp_sync_conflicts') || '[]'));
+    } catch (e) {
+        _conflictedProjects = new Set();
+    }
+
+    function withProjectVersion(projectId, options = {}) {
+        const headers = Object.assign({}, options.headers || {});
+        const version = _projectVersions.get(projectId);
+        if (version !== undefined) headers['If-Match'] = String(version);
+        return { ...options, headers };
+    }
+
+    function rememberProjectVersionValue(projectId, version) {
+        if (!Number.isInteger(version) || version < 1) return;
+        _projectVersions.set(projectId, version);
+        try {
+            localStorage.setItem('cp_project_versions', JSON.stringify(Object.fromEntries(_projectVersions)));
+        } catch (e) {}
+    }
+
+    async function rememberProjectVersion(response, projectId) {
+        try {
+            const data = await response.clone().json();
+            if (Number.isInteger(data.projectVersion)) rememberProjectVersionValue(projectId, data.projectVersion);
+            else if (Number.isInteger(data.version)) rememberProjectVersionValue(projectId, data.version);
+        } catch (e) {}
+    }
+
+    function isProjectVersionFailure(response) {
+        return response.status === 409 || response.status === 428;
+    }
+
+    async function recordProjectConflict(response, projectId) {
+        let details = {};
+        try { details = await response.clone().json(); } catch (e) {}
+        _conflictedProjects.add(projectId);
+        try { localStorage.setItem('cp_sync_conflicts', JSON.stringify([..._conflictedProjects])); } catch (e) {}
+        const message = `Conflit de synchronisation pour ${projectId}: les données locales sont conservées et la synchronisation automatique est suspendue. Exportez une sauvegarde avant toute résolution.`;
+        console.error('[Proxy]', message, details);
+        if (window.UI && typeof window.UI.showToast === 'function') window.UI.showToast(message, 'error');
+        document.dispatchEvent(new CustomEvent('projectSyncConflict', { detail: { projectId, ...details } }));
+    }
 
     function getRetryDelay(attempt) {
         const delay = RETRY_CONFIG.baseDelay *
@@ -656,9 +715,7 @@
                 await sleep(delay);
             }
         }
-        if (lastResponse && lastResponse.status >= 400 && lastResponse.status < 500) {
-            throw new Error(`Erreur client (${lastResponse.status})`);
-        }
+        if (lastResponse && lastResponse.status >= 400 && lastResponse.status < 500) return lastResponse;
         throw new Error(`Échec après ${maxAttempts} tentatives: ${
             lastError ? lastError.message : 'Erreur inconnue'
         }`);
@@ -734,12 +791,20 @@
         document.dispatchEvent(new CustomEvent('backendAvailable', {
             detail: { timestamp: Date.now() }
         }));
+        // Le backend est revenu : on tire les projets serveur ET on pousse
+        // les projets locaux qui n'y sont pas encore (récupère une désync).
         syncPendingChanges();
+        pushProjectsToBackend({ silent: true });
     }
 
     if (!IS_FILE_CONTEXT) {
         setTimeout(checkBackend, 100);
         setInterval(checkBackend, 30000);
+        // Rattrapage périodique : repousse les projets locaux modifiés/créés
+        // vers le serveur (ex: équipements ajoutés hors ligne). Silencieux.
+        // Un premier essai après 5 s, puis toutes les 60 s.
+        setTimeout(() => pushProjectsToBackend({ silent: true }), 5000);
+        setInterval(() => pushProjectsToBackend({ silent: true }), 60000);
     }
 
     // ============================================================
@@ -775,10 +840,19 @@
                 return;
             }
 
-            const syncPromises = localEquipments.map(eq => syncEquipment(eq));
-            const results = await Promise.allSettled(syncPromises);
-            const synced = results.filter(r => r.status === 'fulfilled').length;
-            const failed = results.filter(r => r.status === 'rejected').length;
+            let synced = 0;
+            let failed = 0;
+            for (const equipment of localEquipments) {
+                try {
+                    const success = await syncEquipment(equipment);
+                    if (success) synced++;
+                    else failed++;
+                    if (_conflictedProjects.has(projectId)) break;
+                } catch (error) {
+                    failed++;
+                    console.warn('[Proxy] Équipement non synchronisé:', equipment.id, error);
+                }
+            }
 
             if (synced > 0 || failed > 0) {
                 console.log(`[Proxy] Synchronisation terminée: ${synced} réussis, ${failed} échecs.`);
@@ -817,25 +891,33 @@
             //   - 201 → créé
             //   - 409 → existe déjà → basculer sur PUT
             //   - 404 → projet parent manquant → vérifier côté projet
-            let response = await fetchWithRetry(`${API_BASE_URL}/equipments`, {
+            let response = await fetchWithRetry(`${API_BASE_URL}/equipments`, withProjectVersion(equipment.projectId, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(equipment)
-            }, 2);
+            }), 2);
 
             if (response.status === 409) {
-                // Équipement déjà existant → mise à jour
-                const updateResponse = await fetchWithRetry(`${API_BASE_URL}/equipments/${equipment.id}`, {
+                let errorBody = {};
+                try { errorBody = await response.clone().json(); } catch (e) {}
+                if (errorBody.error === 'PROJECT_VERSION_CONFLICT') {
+                    await recordProjectConflict(response, equipment.projectId);
+                    return false;
+                }
+                response = await fetchWithRetry(`${API_BASE_URL}/equipments/${equipment.id}`, withProjectVersion(equipment.projectId, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(equipment)
-                }, 2);
-                if (!updateResponse.ok) {
-                    throw new Error(`Erreur mise à jour: ${updateResponse.status}`);
-                }
-            } else if (!response.ok && response.status !== 201) {
+                }), 2);
+            }
+            if (isProjectVersionFailure(response)) {
+                await recordProjectConflict(response, equipment.projectId);
+                return false;
+            }
+            if (!response.ok && response.status !== 201) {
                 throw new Error(`Erreur création: ${response.status}`);
             }
+            await rememberProjectVersion(response, equipment.projectId);
             return true;
         } catch (e) {
             console.warn(`[Proxy] Erreur sync équipement ${equipment.id}:`, e);
@@ -856,15 +938,31 @@
 
             if (!wasInSave && _isBackendAvailable && isAuthenticated()) {
                 try {
-                    const response = await fetchWithRetry(`${API_BASE_URL}/equipments`, {
+                    let response = await fetchWithRetry(`${API_BASE_URL}/equipments`, withProjectVersion(equipment.projectId, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(equipment)
-                    }, RETRY_CONFIG.maxAttempts);
-                    if (!response.ok) {
+                    }), RETRY_CONFIG.maxAttempts);
+                    let responseBody = {};
+                    if (response.status === 409) {
+                        try { responseBody = await response.clone().json(); } catch (e) {}
+                        if (responseBody.error === 'PROJECT_VERSION_CONFLICT') {
+                            // The shared response handler below records the conflict once.
+                        } else {
+                            response = await fetchWithRetry(`${API_BASE_URL}/equipments/${equipment.id}`, withProjectVersion(equipment.projectId, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(equipment)
+                            }), RETRY_CONFIG.maxAttempts);
+                        }
+                    }
+                    if (isProjectVersionFailure(response)) {
+                        await recordProjectConflict(response, equipment.projectId);
+                    } else if (!response.ok) {
                         const text = await response.text();
                         console.warn('[Proxy] Erreur sauvegarde backend:', text);
                     } else {
+                        await rememberProjectVersion(response, equipment.projectId);
                         _lastSyncData = equipment;
                         _lastSyncTimestamp = Date.now();
                     }
@@ -901,19 +999,24 @@
     StorageManager.deleteEquipment = async function(equipmentId) {
         const wasInSave = isInternalSave();
         const saveToken = wasInSave ? _currentSaveToken : beginInternalSave();
+        const equipment = ProjectManager.getState().equipments.find(item => item.id === equipmentId);
+        const projectId = equipment && equipment.projectId;
 
         try {
             const localPromise = originalDeleteEquipment.call(this, equipmentId);
 
             if (!wasInSave && _isBackendAvailable && isAuthenticated()) {
                 try {
-                    const response = await fetchWithRetry(`${API_BASE_URL}/equipments/${equipmentId}`, {
+                    const response = await fetchWithRetry(`${API_BASE_URL}/equipments/${equipmentId}`, withProjectVersion(projectId, {
                         method: 'DELETE'
-                    }, RETRY_CONFIG.maxAttempts);
-                    if (!response.ok) {
+                    }), RETRY_CONFIG.maxAttempts);
+                    if (isProjectVersionFailure(response) && projectId) {
+                        await recordProjectConflict(response, projectId);
+                    } else if (!response.ok) {
                         const text = await response.text();
                         console.warn('[Proxy] Erreur suppression backend:', text);
                     } else {
+                        if (projectId) await rememberProjectVersion(response, projectId);
                         _lastSyncTimestamp = Date.now();
                     }
                 } catch (e) {
@@ -955,6 +1058,7 @@
                 if (response.ok) {
                     const data = await response.json();
                     if (data && Array.isArray(data.items)) {
+                        rememberProjectVersionValue(projectId, data.projectVersion);
                         const equipments = data.items.map(eq => {
                             const result = {
                                 id: eq.id,
@@ -1036,18 +1140,19 @@
             const canCallBackend = !wasInSave
                 && _isBackendAvailable
                 && isAuthenticated()
-                && !recentlyExpired;
+                && !recentlyExpired
+                && !_conflictedProjects.has(project.id);
 
             if (canCallBackend) {
                 try {
                     // ───────────────────────────────────────────────────
                     // FIX 404 : en cas de 404 sur PUT, basculer sur POST
                     // ───────────────────────────────────────────────────
-                    let response = await fetchWithRetry(`${API_BASE_URL}/projects/${project.id}`, {
+                    let response = await fetchWithRetry(`${API_BASE_URL}/projects/${project.id}`, withProjectVersion(project.id, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(project.data)
-                    }, RETRY_CONFIG.maxAttempts);
+                    }), RETRY_CONFIG.maxAttempts);
 
                     if (response.status === 404) {
                         // Fallback : créer le projet côté backend
@@ -1062,19 +1167,25 @@
                                 data: project.data
                             })
                         }, RETRY_CONFIG.maxAttempts);
-                        if (createResponse.ok || createResponse.status === 409) {
-                            response = await fetchWithRetry(`${API_BASE_URL}/projects/${project.id}`, {
+                        if (createResponse.ok) {
+                            await rememberProjectVersion(createResponse, project.id);
+                            response = createResponse;
+                        } else if (createResponse.status === 409) {
+                            response = await fetchWithRetry(`${API_BASE_URL}/projects/${project.id}`, withProjectVersion(project.id, {
                                 method: 'PUT',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(project.data)
-                            }, RETRY_CONFIG.maxAttempts);
+                            }), RETRY_CONFIG.maxAttempts);
                         }
                     }
 
-                    if (!response.ok) {
+                    if (isProjectVersionFailure(response)) {
+                        await recordProjectConflict(response, project.id);
+                    } else if (!response.ok) {
                         const text = await response.text();
                         console.warn('[Proxy] Erreur sauvegarde projet backend:', response.status, text);
                     } else {
+                        await rememberProjectVersion(response, project.id);
                         _lastSyncTimestamp = Date.now();
                     }
                 } catch (e) {
@@ -1115,6 +1226,11 @@
             return false;
         }
 
+        if (_conflictedProjects.has(projectId)) {
+            console.warn('[Proxy] Sync suspendue : conflit de version non résolu pour', projectId);
+            return false;
+        }
+
         if (isInternalSave()) {
             console.debug('[Proxy] fullSync ignoré (sauvegarde interne en cours)');
             return false;
@@ -1151,13 +1267,14 @@
                 equipments: state.equipments
             };
 
-            const response = await fetchWithRetry(`${API_BASE_URL}/projects/${projectId}/full-sync`, {
+            const response = await fetchWithRetry(`${API_BASE_URL}/projects/${projectId}/full-sync`, withProjectVersion(projectId, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(syncData)
-            }, RETRY_CONFIG.maxAttempts);
+            }), RETRY_CONFIG.maxAttempts);
 
             if (response.ok) {
+                await rememberProjectVersion(response, projectId);
                 console.log('[Proxy] Sync complète réussie');
                 _lastSyncTimestamp = Date.now();
                 if (window.UI && typeof window.UI.showToast === 'function') {
@@ -1167,6 +1284,9 @@
                     type: 'fullSync'
                 });
                 return true;
+            } else if (isProjectVersionFailure(response)) {
+                await recordProjectConflict(response, projectId);
+                return false;
             } else {
                 const text = await response.text();
                 console.warn('[Proxy] Erreur sync:', text);
@@ -1194,6 +1314,287 @@
     };
 
     // ============================================================
+    // 9bis. PROXY : PULL PROJETS (restauration serveur → navigateur)
+    // ------------------------------------------------------------
+    // ⭐ PULL-BOOTSTRAP : la lecture locale (loadProjects) reste la
+    // source du rendu. Historiquement, seul un PUSH local → serveur
+    // existait, ce qui rendait les projets « invisibles » dès que
+    // l'IndexedDB/localStorage du navigateur était vide (nouvelle
+    // origine, cache purgé, autre profil…).
+    // Ce mécanisme tire les projets + équipements du serveur vers
+    // le stockage local APRÈS login (ou au démarrage si déjà
+    // authentifié). Écriture LOCALE uniquement (pas de re-push).
+    // ============================================================
+    let _pullInProgress = false;
+
+    async function _pullEquipments(projectId) {
+        try {
+            const response = await fetchWithRetry(
+                `${API_BASE_URL}/projects/${projectId}/equipments`,
+                { method: 'GET' }, RETRY_CONFIG.maxAttempts);
+            if (!response.ok) return 0;
+            const data = await response.json();
+            if (!data || !Array.isArray(data.items)) return 0;
+            rememberProjectVersionValue(projectId, data.projectVersion);
+            let count = 0;
+            for (const eq of data.items) {
+                const record = {
+                    id: eq.id,
+                    tag: eq.tag,
+                    type: eq.type,
+                    surface: eq.surface,
+                    projectId: eq.project_id || eq.projectId,
+                    included: eq.included === 1 || eq.included === true,
+                    systemId: eq.system_id || eq.systemId,
+                    dimensions: eq.dimensions || {},
+                    coordinates: (typeof eq.coordinates === 'string' && eq.coordinates !== '')
+                        ? (() => { try { return JSON.parse(eq.coordinates); } catch (e) { return null; } })()
+                        : (eq.coordinates || null),
+                    material: eq.material || 'acier',
+                    wallThickness: eq.wallThickness || 8.0,
+                    coatingType: eq.coatingType || '3LPE',
+                    coatingCondition: eq.coatingCondition || 'neuf',
+                    coatingThickness: eq.coatingThickness || 0,
+                    soilResistivity: eq.soilResistivity || 0,
+                    cpData: eq.cpData || { parameters: {}, results: {}, calculated: false }
+                };
+                if (eq.data) {
+                    for (const [key, value] of Object.entries(eq.data)) {
+                        if (!(key in record) || record[key] === null ||
+                            (typeof record[key] === 'object' && !Array.isArray(record[key]) &&
+                             Object.keys(record[key]).length === 0)) {
+                            record[key] = value;
+                        }
+                    }
+                }
+                await originalSaveEquipment.call(StorageManager, record);
+                count++;
+            }
+            return count;
+        } catch (e) {
+            console.warn('[Proxy] PULL équipements échoué pour', projectId, e);
+            return 0;
+        }
+    }
+
+    async function pullProjectsFromBackend(options = {}) {
+        const silent = options.silent === true;
+        if (_pullInProgress) return false;
+        if (isInternalSave()) return false;
+        if (!_isBackendAvailable) { try { await checkBackend(); } catch (e) {} }
+        if (!_isBackendAvailable || !isAuthenticated()) return false;
+
+        _pullInProgress = true;
+        try {
+            const listRes = await fetchWithRetry(`${API_BASE_URL}/projects?limit=200`,
+                { method: 'GET' }, RETRY_CONFIG.maxAttempts);
+            if (!listRes.ok) return false;
+            const list = await listRes.json();
+            const items = (list && Array.isArray(list.items)) ? list.items : [];
+            if (items.length === 0) return false;
+
+            let projectsCount = 0;
+            let eqTotal = 0;
+            for (const item of items) {
+                if (!item || !item.id) continue;
+                const detailRes = await fetchWithRetry(`${API_BASE_URL}/projects/${item.id}`,
+                    { method: 'GET' }, RETRY_CONFIG.maxAttempts);
+                if (!detailRes.ok) continue;
+                await rememberProjectVersion(detailRes, item.id);
+                const detail = await detailRes.json();
+                let data = detail.data;
+                if (typeof data === 'string') {
+                    try { data = JSON.parse(data); } catch (e) { data = null; }
+                }
+                if (!data || typeof data !== 'object') data = {};
+                data.project = data.project || {};
+                data.project.id = item.id;
+                if (item.name) data.project.name = item.name;
+
+                await originalSaveProject.call(StorageManager, {
+                    id: item.id,
+                    name: item.name || item.id,
+                    type: item.type || data.project.cpSystemType || 'mixte',
+                    createdAt: item.created_at || data.project.createdAt || new Date().toISOString(),
+                    updatedAt: item.updated_at || new Date().toISOString(),
+                    data: data
+                });
+                projectsCount++;
+                eqTotal += await _pullEquipments(item.id);
+            }
+
+            console.log('[Proxy] ⭐ PULL-BOOTSTRAP : ' + projectsCount +
+                        ' projet(s) et ' + eqTotal + ' équipement(s) restaurés depuis le serveur.');
+            if (!silent && window.UI && typeof window.UI.showToast === 'function') {
+                window.UI.showToast('🔄 Données synchronisées depuis le serveur (' +
+                    projectsCount + ' projet(s)).', 'info');
+            }
+            document.dispatchEvent(new CustomEvent('projectsPulled', {
+                detail: { projects: projectsCount, equipments: eqTotal }
+            }));
+            return projectsCount > 0;
+        } catch (e) {
+            console.warn('[Proxy] PULL-BOOTSTRAP échoué:', e);
+            return false;
+        } finally {
+            _pullInProgress = false;
+        }
+    }
+
+    // ============================================================
+    // 9-bis. PUSH PROJETS → BACKEND (sync auto navigateur → serveur)
+    // ============================================================
+    // Complément de pullProjectsFromBackend (serveur → navigateur).
+    // Pousse les projets créés/modifiés localement vers le serveur pour
+    // que le Dashboard (qui lit la base serveur) les voie aussi.
+    // SÉCURITÉ : UPSERT. Le backend `PUT /api/projects/<id>` crée le projet
+    // s'il est absent, sans écrasement destructif. Un drapeau local
+    // `cp_pushed_projects` évite de repousser un projet inchangé.
+    let _pushInProgress = false;
+
+    function _getPushedMap() {
+        try { return JSON.parse(localStorage.getItem('cp_pushed_projects') || '{}'); }
+        catch (e) { return {}; }
+    }
+    function _setPushedMap(map) {
+        try { localStorage.setItem('cp_pushed_projects', JSON.stringify(map)); } catch (e) {}
+    }
+    // Empreinte simple d'un projet pour détecter un changement sans repousser à l'identique.
+    function _projectFingerprint(project) {
+        try {
+            const s = JSON.stringify(project.data || {});
+            return s.length + ':' + (s.slice(0, 64)) + ':' + (s.slice(-64));
+        } catch (e) { return String(Date.now()); }
+    }
+
+    // Pousse les équipements embarqués d'un projet (data.equipments), en
+    // respectant la version du projet (If-Match) comme le fait saveEquipment.
+    async function _pushProjectEquipments(project) {
+        const eqs = (project.data && Array.isArray(project.data.equipments)) ? project.data.equipments : [];
+        if (eqs.length === 0) return;
+        let version = _projectVersions.get(project.id);
+        for (const eq of eqs) {
+            if (!eq || !eq.id) continue;
+            const payload = Object.assign({}, eq);
+            payload.projectId = payload.projectId || project.id;
+            try {
+                let er = await fetchWithRetry(`${API_BASE_URL}/equipments`,
+                    withProjectVersion(project.id, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    }), RETRY_CONFIG.maxAttempts);
+                if (er.status === 409) {
+                    er = await fetchWithRetry(`${API_BASE_URL}/equipments/${encodeURIComponent(eq.id)}`,
+                        withProjectVersion(project.id, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        }), RETRY_CONFIG.maxAttempts);
+                }
+                try { const vj = await er.clone().json(); if (vj.version) { version = vj.version; rememberProjectVersionValue(project.id, version); } } catch (e) {}
+            } catch (e) {
+                console.warn('[Proxy] Push équipement échoué:', eq.id, e.message);
+            }
+        }
+    }
+
+    /**
+     * Pousse les projets locaux absents ou modifiés côté serveur.
+     * Silencieux et idempotent. UPSERT : jamais d'écrasement destructif.
+     * @returns {Promise<number>} nombre de projets effectivement poussés.
+     */
+    async function pushProjectsToBackend(options = {}) {
+        const silent = options.silent === true;
+        if (IS_FILE_CONTEXT) return 0;
+        if (_pushInProgress) return 0;
+        if (isInternalSave()) return 0;
+        if (!_isBackendAvailable) { try { await checkBackend(); } catch (e) {} }
+        if (!_isBackendAvailable || !isAuthenticated()) return 0;
+
+        _pushInProgress = true;
+        let pushed = 0;
+        try {
+            const localProjects = await StorageManager.loadProjects();
+            if (!Array.isArray(localProjects) || localProjects.length === 0) return 0;
+
+            // IDs déjà connus du serveur (une seule requête)
+            let serverIds = new Set();
+            try {
+                const listRes = await fetchWithRetry(`${API_BASE_URL}/projects?limit=200`,
+                    { method: 'GET' }, RETRY_CONFIG.maxAttempts);
+                if (listRes.ok) {
+                    const list = await listRes.json();
+                    (list.items || []).forEach(i => serverIds.add(i.id));
+                }
+            } catch (e) { /* le PUT décidera */ }
+
+            const pushedMap = _getPushedMap();
+
+            for (const project of localProjects) {
+                if (!project || !project.id) continue;
+                const fp = _projectFingerprint(project);
+                const already = pushedMap[project.id];
+                if (serverIds.has(project.id) && already && already.fp === fp) continue;
+
+                try {
+                    let response = await fetchWithRetry(
+                        `${API_BASE_URL}/projects/${encodeURIComponent(project.id)}`,
+                        withProjectVersion(project.id, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(project.data || {})
+                        }), RETRY_CONFIG.maxAttempts);
+
+                    if (response.status === 404) {
+                        const createRes = await fetchWithRetry(`${API_BASE_URL}/projects`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                id: project.id,
+                                name: (project.data && project.data.project && project.data.project.name) || project.name || project.id,
+                                type: (project.data && project.data.project && project.data.project.cpSystemType) || project.type || 'mixte',
+                                data: project.data
+                            })
+                        }, RETRY_CONFIG.maxAttempts);
+                        response = createRes;
+                    }
+
+                    if (isProjectVersionFailure(response)) {
+                        await recordProjectConflict(response, project.id);
+                        continue;
+                    }
+                    if (!response.ok) {
+                        console.warn('[Proxy] Push projet échoué:', project.id, response.status);
+                        continue;
+                    }
+                    await rememberProjectVersion(response, project.id);
+                    pushedMap[project.id] = { fp, ts: Date.now() };
+                    pushed++;
+                    await _pushProjectEquipments(project);
+                } catch (e) {
+                    console.warn('[Proxy] Push projet (après retry) échoué:', project.id, e.message);
+                }
+            }
+
+            _setPushedMap(pushedMap);
+            if (pushed > 0) {
+                console.log(`[Proxy] Push auto : ${pushed} projet(s) envoye(s) au serveur.`);
+                if (!silent && window.UI && typeof window.UI.showToast === 'function') {
+                    window.UI.showToast(`${pushed} projet(s) synchronise(s) avec le serveur.`, 'success');
+                }
+                document.dispatchEvent(new CustomEvent('projectsPushed', { detail: { count: pushed } }));
+            }
+            return pushed;
+        } catch (e) {
+            console.warn('[Proxy] pushProjectsToBackend echoue:', e);
+            return pushed;
+        } finally {
+            _pushInProgress = false;
+        }
+    }
+
+    // ============================================================
     // 10. MÉTHODES D'UTILITÉ
     // ============================================================
     StorageManager.isBackendAvailable = function() {
@@ -1201,6 +1602,8 @@
     };
 
     StorageManager.checkBackend = checkBackend;
+    StorageManager.pullProjectsFromBackend = pullProjectsFromBackend;
+    StorageManager.pushProjectsToBackend = pushProjectsToBackend;
 
     StorageManager.getLastSyncTimestamp = function() {
         return _lastSyncTimestamp;
@@ -1323,6 +1726,16 @@
     // en attente (await) — pas de race condition.
     // ============================================================
     ensureHttpOnlyModeReady();
+
+    // ⭐ PULL-BOOTSTRAP au démarrage : si une session existe déjà
+    // (token legacy persisté), restaurer les données du serveur.
+    setTimeout(() => {
+        try {
+            if (isAuthenticated()) {
+                pullProjectsFromBackend({ silent: true }).catch(() => {});
+            }
+        } catch (e) {}
+    }, 4000);
 
     console.log('[Proxy] Couche de persistance active - Backend + IndexedDB');
     console.log('[Proxy] Authentification JWT intégrée.');

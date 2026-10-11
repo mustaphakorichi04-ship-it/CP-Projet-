@@ -54,7 +54,7 @@
     <link rel="stylesheet" href="vendor/leaflet.markercluster/1.4.1/MarkerCluster.Default.css"
       integrity="sha384-5kMSQJ6S4Qj5i09mtMNrWpSi8iXw230pKU76xTmrpezGnNJQzj0NzXjQLLg+jE7k"
       crossorigin="anonymous" />
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=20261010-1" />
 <!-- ============================================================
      NOUVEAU : SheetJS pour lire les fichiers Excel (.xlsx, .xls)
      ============================================================ -->
@@ -79,17 +79,23 @@
         <div class="header-left">
             <button class="sidebar-toggle" id="sidebarToggle" aria-label="Menu principal" aria-expanded="false"><i class="fas fa-bars" aria-hidden="true"></i></button>
             <div class="logo"><i class="fas fa-shield-alt" aria-hidden="true"></i><span>CP Engineer <em>Pro</em></span></div>
-            <a href="/dashboard" class="btn touch-target" title="Retourner au Tableau de Bord SaaS" style="display:inline-flex; align-items:center; gap:6px; font-weight:600; text-decoration:none; margin-left:14px; background:rgba(0,122,255,0.18); border:1px solid rgba(0,122,255,0.4); color:#60a5fa; padding:5px 12px; border-radius:8px; font-size:0.84rem;">
-                <i class="fas fa-arrow-left"></i> <span>Tableau de bord SaaS</span>
+            <a href="/dashboard" class="btn touch-target" aria-label="Ouvrir le portail SaaS" title="Ouvrir le portail SaaS" style="display:inline-flex; align-items:center; justify-content:center; text-decoration:none; margin-left:4px; background:rgba(0,122,255,0.18); border:1px solid rgba(0,122,255,0.4); color:#60a5fa; padding:5px; border-radius:8px; font-size:0.84rem;">
+                <i class="fas fa-arrow-left" aria-hidden="true"></i>
             </a>
-            <span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.35); color:#fbbf24; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; text-transform:uppercase; letter-spacing:0.04em; margin-left:8px;">Sandbox DEMO</span>
         </div>
      <div class="header-center">
     <div class="project-selector">
         <label for="projectSelector"><i class="fas fa-folder" aria-hidden="true"></i> Projet :</label>
         <select id="projectSelector" aria-label="Sélection du projet"></select>
         <button id="newProjectBtn" class="btn-sm touch-target" title="Nouveau projet" aria-label="Créer un nouveau projet"><i class="fas fa-plus" aria-hidden="true"></i></button>
-        <button id="deleteProjectBtn" class="btn-sm btn-danger touch-target" title="Supprimer ce projet" aria-label="Supprimer le projet actif"><i class="fas fa-trash" aria-hidden="true"></i></button>
+        <!-- BOUTON MODIFIER LE PROJET ACTIF (ID / nom / type de protection) -->
+        <button id="editProjectBtn" class="btn-sm touch-target" title="Modifier le projet (ID, nom, type de protection)" aria-label="Modifier le projet actif" style="margin-left: 0.25rem; background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.5); color: #60a5fa; padding: 0.25rem 0.55rem; border-radius: 6px; cursor: pointer; transition: all 0.2s ease;">
+            <i class="fas fa-pen-to-square" aria-hidden="true"></i>
+        </button>
+        <!-- BOUTON SUPPRIMER LE PROJET ACTIF -->
+        <button id="deleteProjectBtn" class="btn-sm touch-target" title="Supprimer le projet actif" aria-label="Supprimer le projet actif" style="margin-left: 0.25rem; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.5); color: #f87171; padding: 0.25rem 0.55rem; border-radius: 6px; cursor: pointer; transition: all 0.2s ease;">
+            <i class="fas fa-trash-alt" aria-hidden="true"></i>
+        </button>
         <!-- BOUTON ENREGISTRER TOUT -->
         <button id="saveAllBtn" class="btn btn-success touch-target" title="Enregistrer toutes les données immédiatement (Ctrl+Shift+S)" style="margin-left: 0.5rem; padding: 0.2rem 0.8rem; white-space: nowrap;">
             <i class="fas fa-save" aria-hidden="true"></i>
@@ -103,14 +109,38 @@
     <div class="save-status-bar" id="saveStatusBar">
         <span id="lastSaveTime">Dernière sauvegarde : --</span>
         <span id="saveIndicator" class="save-indicator saved" title="État de la sauvegarde">●</span>
-        <button id="saveNowBtn" class="btn btn-primary touch-target" title="Sauvegarder maintenant (Ctrl+S)"><i class="fas fa-save"></i> Sauvegarder</button>
-        <button id="forceSaveAllBtn" class="btn btn-success touch-target" title="Sauvegarde complète de toutes les données"><i class="fas fa-database"></i> Sauvegarde complète</button>
     </div>
 
     <div class="status-badge"><span class="status-dot" aria-hidden="true"></span><span>Connecté</span></div>
     <div class="header-date" id="headerDate" aria-live="polite">--/--/---- --:--</div>
     <div class="header-user"><i class="fas fa-user-circle" aria-hidden="true"></i> Ing. Mustapha Korichi</div>
-    <button class="btn btn-secondary touch-target" id="themeToggle" aria-label="Basculer le thème clair/sombre"><i class="fas fa-moon" aria-hidden="true"></i></button>
+    <!-- SÉLECTEUR DE STYLE : 3 styles d'interface (Sombre / Clair / Data-Driven) -->
+    <div class="theme-picker">
+        <button class="btn btn-secondary touch-target" id="themeToggle" aria-label="Choisir un style d'interface" aria-haspopup="true" aria-expanded="false"><i class="fas fa-moon" aria-hidden="true"></i></button>
+        <div class="style-picker-menu" id="stylePickerMenu" role="menu" aria-label="Styles d'interface">
+            <div class="style-picker-title">Style d'interface</div>
+            <button type="button" class="style-option active" role="menuitemradio" data-theme="dark" aria-checked="true">
+                <i class="fas fa-moon" aria-hidden="true"></i>
+                <span class="style-option-text"><strong>Sombre</strong><small>Mode premium sombre (par défaut)</small></span>
+            </button>
+            <button type="button" class="style-option" role="menuitemradio" data-theme="light" aria-checked="false">
+                <i class="fas fa-sun" aria-hidden="true"></i>
+                <span class="style-option-text"><strong>Clair</strong><small>Mode lumineux</small></span>
+            </button>
+            <button type="button" class="style-option" role="menuitemradio" data-theme="data" aria-checked="false">
+                <i class="fas fa-chart-column" aria-hidden="true"></i>
+                <span class="style-option-text"><strong>Data-Driven</strong><small>Corporate / Enterprise · Flat Design</small></span>
+            </button>
+            <button type="button" class="style-option" role="menuitemradio" data-theme="enterprise" aria-checked="false">
+                <i class="fas fa-building" aria-hidden="true"></i>
+                <span class="style-option-text"><strong>Enterprise</strong><small>Bleu marine · Fond clair · PTW Style</small></span>
+            </button>
+            <button type="button" class="style-option" role="menuitemradio" data-theme="pulse" aria-checked="false">
+                <i class="fas fa-wave-square" aria-hidden="true"></i>
+                <span class="style-option-text"><strong>Pulse</strong><small>Soft UI · Blanc neumorphique · Bleu #4f7cff</small></span>
+            </button>
+        </div>
+    </div>
     <button class="btn btn-info touch-target" id="exportGlobalBtn" aria-label="Exporter rapport au format TXT"><i class="fas fa-file-export" aria-hidden="true"></i> Exporter (TXT)</button>
     <button class="btn btn-warning touch-target" id="exportPDFBtn" aria-label="Exporter rapport au format PDF"><i class="fas fa-file-pdf" aria-hidden="true"></i> Rapport PDF</button>
 
@@ -1032,11 +1062,11 @@
                                         <button type="button" id="linkCurrentToAnodes" class="btn-link linked touch-target" title="Lier avec le courant des anodes" aria-label="Lier avec le courant des anodes">🔗</button>
                                         <span class="source-badge auto">calculé</span>
                                     </div>
-                                    <div class="result-card"><span class="result-label">IR Drop estimé</span><span class="result-value" id="resIRDrop">—</span><span class="result-unit">V</span></div>
+                                    <div class="result-card"><span class="result-label">Chute ohmique totale</span><span class="result-value" id="resIRDrop">—</span><span class="result-unit">V</span></div>
                                     <div class="result-card"><span class="result-label">Résistance circuit</span><span class="result-value" id="resResistance">—</span><span class="result-unit">Ω</span></div>
                                     <div class="result-card"><span class="result-label">Surface exposée (défauts)</span><span class="result-value" id="resEffectiveArea">—</span><span class="result-unit">m²</span></div>
                                 </div>
-                                <table class="tech-table" aria-label="Détails du calcul CP"><thead><tr><th>Paramètre</th><th>Valeur calculée</th><th>Formule / Référence</th></tr></thead><tbody id="cpCalcTableBody"></tbody></table>
+                                <table class="tech-table" aria-label="Détails du calcul CP"><thead><tr><th>Paramètre</th><th>Valeur calculée</th><th>Unité</th><th>Formule / Référence</th></tr></thead><tbody id="cpCalcTableBody"></tbody></table>
                                 <div class="calc-note"><i class="fas fa-book" aria-hidden="true"></i> Référence : <span id="cpCalcRef">NACE SP0169 / ISO 15589-1</span></div>
                                 <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
                                     <button id="syncCPToAnodesBtn" class="btn btn-sm btn-info touch-target" aria-label="Utiliser ce courant pour les anodes"><i class="fas fa-sync-alt" aria-hidden="true"></i> Utiliser ce courant pour les anodes (copie unique)</button>
@@ -1152,6 +1182,7 @@
                 <div class="module-tabs-toolbar"><div class="ui-tab-list" role="tablist" aria-label="Dimensionnement anodes sacrifielles">
                     <button type="button" class="ui-tab-button active" data-tab-target="anode-param-panel" role="tab" aria-selected="true">Paramètres</button>
                     <button type="button" class="ui-tab-button" data-tab-target="anode-results-panel" role="tab" aria-selected="false">Résultats</button>
+                    <button type="button" class="ui-tab-button" data-tab-target="anode-calc-panel" role="tab" aria-selected="false">Formule et Resultat</button>
                 </div><div class="module-top-actions"><button type="submit" form="anodeForm" class="btn btn-primary touch-target"><i class="fas fa-calculator"></i> Dimensionner</button><button type="reset" form="anodeForm" class="btn btn-secondary touch-target"><i class="fas fa-undo"></i> Réinitialiser</button></div></div>
 
                 <div id="anode-param-panel" class="ui-tab-panel active" role="tabpanel">
@@ -1431,6 +1462,17 @@
                                     <div class="result-card"><span class="result-label">Courant de sortie initial (DNV)</span><span class="result-value" id="resInitialCurrent">—</span><span class="result-unit">A</span></div>
                                 </div>
                                 <div class="anode-visual"><div class="anode-bar-label">Consommation sur durée de vie</div><div class="anode-bar-track"><div class="anode-bar-fill" id="anodeBarFill" style="width:0%"></div><span class="anode-bar-text" id="anodeBarText">0%</span></div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="anode-calc-panel" class="ui-tab-panel" role="tabpanel">
+                    <div class="card">
+                        <div class="card-header"><h3><i class="fas fa-calculator" aria-hidden="true"></i> Formules et Résultats Détaillés Anodes</h3></div>
+                        <div class="card-body">
+                            <div id="anodeCalcPlaceholder" class="results-placeholder"><i class="fas fa-clipboard-list" aria-hidden="true"></i><p>Configurez les paramètres et cliquez sur Dimensionner pour afficher le tableau de calcul</p></div>
+                            <div id="anodeCalcContent" class="results-content hidden">
                                 <table class="tech-table" aria-label="Détails des anodes"><thead><tr><th>Propriété</th><th>Valeur</th><th>Remarque</th></tr></thead><tbody id="anodeTableBody"></tbody></table>
                                 <div class="calc-note"><i class="fas fa-book" aria-hidden="true"></i> Références : DNV-RP-B401, NACE SP0169, ISO 15589-2. La résistance d'anode est calculée selon la formule de Dwight (cylindre). Le courant initial utilise le potentiel protégé cible (-850 mV) conformément à la norme.</div>
                             </div>
@@ -1454,6 +1496,7 @@
                 <div class="module-tabs-toolbar"><div class="ui-tab-list" role="tablist" aria-label="Dimensionnement ICCP">
                     <button type="button" class="ui-tab-button active" data-tab-target="iccp-param-panel" role="tab" aria-selected="true">Paramètres</button>
                     <button type="button" class="ui-tab-button" data-tab-target="iccp-results-panel" role="tab" aria-selected="false">Résultats</button>
+                    <button type="button" class="ui-tab-button" data-tab-target="iccp-calc-panel" role="tab" aria-selected="false">Formule et Resultat</button>
                 </div><div class="module-top-actions"><button type="submit" form="iccpForm" class="btn btn-primary touch-target"><i class="fas fa-calculator"></i> Calculer ICCP</button><button type="reset" form="iccpForm" class="btn btn-secondary touch-target"><i class="fas fa-undo"></i> Réinitialiser</button></div></div>
 
                 <div id="iccp-param-panel" class="ui-tab-panel active" role="tabpanel">
@@ -1700,13 +1743,24 @@
                                 </div>
 
                                 <div id="reinforcementResultsContainer" style="margin-top:1rem;">
-                                    <h4><i class="fas fa-clipboard-list"></i> Reinforcement Zones Analysis</h4>
+                                    <h4><i class="fas fa-clipboard-list"></i> Analyse des zones de renforcement</h4>
                                     <div id="reinforcementResultsContent">
-                                        <p class="info-message">No zones analyzed. Add zones and click "Analyze Reinforcement Needs".</p>
+                                        <p class="info-message">Aucune zone analysée. Ajoutez des zones critiques puis cliquez sur « Analyser ».</p>
                                     </div>
                                 </div>
 
-                                <table class="tech-table" aria-label="Détails ICCP"><thead><tr><th>Paramètre</th><th>Valeur calculée</th><th>Formule / Référence</th></tr></thead><tbody id="iccpTableBody"></tbody></table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="iccp-calc-panel" class="ui-tab-panel" role="tabpanel">
+                    <div class="card">
+                        <div class="card-header"><h3><i class="fas fa-calculator" aria-hidden="true"></i> Formules et Résultats Détaillés ICCP</h3></div>
+                        <div class="card-body">
+                            <div id="iccpCalcPlaceholder" class="results-placeholder"><i class="fas fa-clipboard-list" aria-hidden="true"></i><p>Entrez les paramètres et calculez pour afficher le tableau de calcul</p></div>
+                            <div id="iccpCalcContent" class="results-content hidden">
+                                <table class="tech-table" aria-label="Détails ICCP"><thead><tr><th>Paramètre</th><th>Valeur calculée</th><th>Unité</th><th>Formule / Référence</th></tr></thead><tbody id="iccpTableBody"></tbody></table>
                                 <div class="calc-note"><i class="fas fa-book" aria-hidden="true"></i> La résistance de groupe est calculée selon la formule de Sunde (interaction mutuelle) en utilisant la distance anode-structure. La densité de courant anodique est vérifiée par rapport à la limite du matériau. L'espacement doit être supérieur au diamètre.</div>
                             </div>
                         </div>
@@ -1800,6 +1854,7 @@
                     <button type="button" class="ui-tab-button active" data-tab-target="groundbed-list-panel" role="tab" aria-selected="true">Liste</button>
                     <button type="button" class="ui-tab-button" data-tab-target="groundbed-form-panel" role="tab" aria-selected="false">Fiche</button>
                     <button type="button" class="ui-tab-button" data-tab-target="groundbed-results-panel" role="tab" aria-selected="false">Résultats</button>
+                    <button type="button" class="ui-tab-button" data-tab-target="groundbed-calc-panel" role="tab" aria-selected="false">Formule et Resultat</button>
                 </div><div class="module-top-actions"><button type="submit" form="groundbedForm" class="btn btn-primary touch-target"><i class="fas fa-calculator"></i> Calculer et sauvegarder</button><button type="reset" form="groundbedForm" class="btn btn-secondary touch-target"><i class="fas fa-undo"></i> Réinitialiser</button></div></div>
 
                 <div id="groundbed-list-panel" class="ui-tab-panel active" role="tabpanel">
@@ -2096,9 +2151,26 @@
                                     <div class="result-card"><span class="result-label">Durée de vie calculée</span><span class="result-value" id="gbCalcLife">—</span><span class="result-unit">ans</span></div>
                                 </div>
                                 <div class="groundbed-visual" id="gbVisual">
-                                    <div style="background:var(--bg-tertiary); padding:0.5rem; border-radius:6px; text-align:center;">Schéma du puits</div>
-                                    <canvas id="gbChart" style="width:100%; height:250px; background:transparent;" aria-label="Schéma du puits anodique"></canvas>
+                                    <div class="groundbed-visual-heading">
+                                            <div>
+                                                <h4><i class="fas fa-layer-group" aria-hidden="true"></i> Coupe technique du puits anodique</h4>
+                                                <p>Schéma interactif — survolez les éléments pour afficher leur description</p>
+                                            </div>
+                                            <span class="groundbed-visual-status"><i class="fas fa-circle" aria-hidden="true"></i> Vue de conception</span>
+                                    </div>
+                                    <div id="gbChart" class="groundbed-svg-host" role="img" aria-label="Schéma technique interactif du puits anodique"></div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="groundbed-calc-panel" class="ui-tab-panel" role="tabpanel">
+                    <div class="card" id="gbCalcCard" style="display:none;">
+                        <div class="card-header"><h3><i class="fas fa-calculator"></i> Formules et Résultats Détaillés</h3></div>
+                        <div class="card-body">
+                            <div id="gbCalcPlaceholder" class="results-placeholder"><i class="fas fa-water" aria-hidden="true"></i><p>Entrez les paramètres et calculez</p></div>
+                            <div id="gbCalcContent" class="results-content">
                                 <table class="tech-table"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Référence</th></tr></thead><tbody id="gbTableBody"></tbody></table>
                                 <div class="calc-note"><i class="fas fa-book" aria-hidden="true"></i> Références : NACE SP0169, ISO 15589-1, Dwight formula, Sunde interaction factor.</div>
                                 <button id="gbExportPDF" class="btn btn-warning touch-target"><i class="fas fa-file-pdf" aria-hidden="true"></i> Exporter rapport PDF</button>
@@ -2609,6 +2681,62 @@
                 </div>
             </div>
         </div>           <!-- fin de la div .module -->
+
+        <div id="module-history" class="module" data-module="history">
+            <div class="module-header">
+                <h1><i class="fas fa-history" aria-hidden="true"></i> Historique des opérations</h1>
+                <p>Consultation des actions enregistrées dans le projet actif</p>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h3><i class="fas fa-list-alt" aria-hidden="true"></i> Journal du projet</h3>
+                    <button id="clearHistoryBtn" class="btn btn-secondary touch-target" type="button">
+                        <i class="fas fa-trash" aria-hidden="true"></i> Effacer l’historique
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="history-filters form-grid-2">
+                        <div class="form-group">
+                            <label for="historyFilterModule">Module</label>
+                            <select id="historyFilterModule" class="tech-form">
+                                <option value="all">Tous les modules</option>
+                                <option value="dashboard">Tableau de bord</option>
+                                <option value="corrosivite">Étude Corrosivité</option>
+                                <option value="equipements">Équipements</option>
+                                <option value="cp-calc">Calcul CP</option>
+                                <option value="anodes">Anodes Sacrificielles</option>
+                                <option value="iccp">Système ICCP</option>
+                                <option value="fieldmeas">Mesures terrain</option>
+                                <option value="groundbed">Deep Well Groundbed</option>
+                                <option value="interference">AC/DC Interference</option>
+                                <option value="testposts">Postes de test</option>
+                                <option value="cartography">Cartographie</option>
+                                <option value="visualisation3d">Visualisation 3D</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="historySystemSelector">Système</label>
+                            <select id="historySystemSelector" class="tech-form"></select>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table class="tech-table" aria-label="Historique des opérations">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Module</th>
+                                    <th>Projet</th>
+                                    <th>Système</th>
+                                    <th>Action</th>
+                                    <th>Résultat</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>              <!-- fin de mainContent -->
 
     <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
@@ -2623,9 +2751,18 @@
             <input type="text" id="newProjectName" placeholder="Nom descriptif" value="Nouveau projet">
             <label>Type de protection</label>
             <div class="project-type-group" role="radiogroup" aria-label="Type de protection">
-                <label><input type="radio" name="projType" value="iccp"> ICCP seul</label>
-                <label><input type="radio" name="projType" value="anodes"> Anodes seules</label>
-                <label><input type="radio" name="projType" value="mixte" checked> Mixte (ICCP + Anodes)</label>
+                <label class="radio-option">
+                    <input type="radio" name="projType" value="iccp">
+                    <span>ICCP seul</span>
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="projType" value="anodes">
+                    <span>Anodes seules</span>
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="projType" value="mixte" checked>
+                    <span>Mixte (ICCP + Anodes)</span>
+                </label>
             </div>
             <div class="btn-group">
                 <button id="confirmCreateProject" class="btn btn-primary touch-target">Créer</button>
@@ -2638,7 +2775,20 @@
         <div class="modal-content">
             <h3 id="systemModalTitle"><i class="fas fa-microchip" aria-hidden="true"></i> Nouveau système CP</h3>
             <label for="newSystemName">Nom du système</label>
-            <input type="text" id="newSystemName" placeholder="Système ICCP 1" value="">
+            <input
+                type="text"
+                id="newSystemName"
+                list="systemNameOptions"
+                placeholder="Système ICCP 1"
+                value=""
+                autocomplete="off"
+            >
+            <datalist id="systemNameOptions">
+                <option value="Système CP 1"></option>
+                <option value="Système CP 2"></option>
+                <option value="Système CP 3"></option>
+                <option value="Système CP 4"></option>
+            </datalist>
             <label for="newSystemType">Type</label>
             <select id="newSystemType"><option value="iccp">ICCP</option><option value="anodes">Anodes sacrificielles</option><option value="mixte">Mixte</option></select>
             <div class="btn-group">
@@ -2653,28 +2803,40 @@
             <h3 id="zoneModalTitle"><i class="fas fa-shield-alt"></i> Ajouter une zone critique</h3>
             <label for="zoneName">Nom / Identifiant</label>
             <input type="text" id="zoneName" placeholder="Zone 1">
-            <label for="zoneLocation">Localisation</label>
-            <input type="text" id="zoneLocation" placeholder="PK 12+500">
+            <label for="zoneLocation">Localisation / Repère (ex: PK, Station)</label>
+            <input type="text" id="zoneLocation" placeholder="PK 12+500 ou Tronçon Nord">
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px;">
+                <div>
+                    <label for="zoneLat" style="font-size: 0.82rem; color: var(--text-secondary);"><i class="fas fa-map-marker-alt" style="color:#f97316;"></i> Latitude GPS (°N/S)</label>
+                    <input type="number" id="zoneLat" step="0.000001" placeholder="ex: 31.852340" style="margin-top: 4px;">
+                </div>
+                <div>
+                    <label for="zoneLon" style="font-size: 0.82rem; color: var(--text-secondary);"><i class="fas fa-map-marker-alt" style="color:#f97316;"></i> Longitude GPS (°E/W)</label>
+                    <input type="number" id="zoneLon" step="0.000001" placeholder="ex: 5.761230" style="margin-top: 4px;">
+                </div>
+            </div>
+
             <label for="zoneProblemType">Type de problème</label>
             <select id="zoneProblemType">
                 <option value="road_crossing">Croisement routier</option>
-                <option value="pipeline_crossing">Croisement pipeline</option>
-                <option value="high_resistivity">Haute résistivité</option>
-                <option value="low_polarization">Faible polarisation</option>
+                <option value="pipeline_crossing">Croisement pipeline / structure tierce</option>
+                <option value="high_resistivity">Haute résistivité du sol</option>
+                <option value="low_polarization">Faible polarisation (sous-protection)</option>
                 <option value="ac_interference">Interférence AC</option>
-                <option value="dc_interference">Interférence DC</option>
-                <option value="insufficient_current">Courant insuffisant</option>
+                <option value="dc_interference">Interférence DC (courants vagabonds)</option>
+                <option value="insufficient_current">Courant insuffisant (atténuation ICCP)</option>
             </select>
             <label for="zoneCriticality">Criticité</label>
             <select id="zoneCriticality">
                 <option value="low">Faible</option>
                 <option value="medium" selected>Moyenne</option>
-                <option value="high">Élevée</option>
+                <option value="high">Élevée / Critique</option>
             </select>
             <label for="zoneAdditionalCurrent">Courant supplémentaire requis (A)</label>
             <input type="number" id="zoneAdditionalCurrent" step="0.01" value="0.5">
-            <label for="zoneAnodesCount">Nombre d'anodes supplémentaires (calculé)</label>
-            <input type="text" id="zoneAnodesCount" class="tech-form" readonly style="background:var(--bg-tertiary);">
+            <label for="zoneAnodesCount">Nombre d'anodes sacrificielles requises (calculé)</label>
+            <input type="text" id="zoneAnodesCount" class="tech-form" readonly style="background:var(--bg-tertiary);" placeholder="ex: 2 anodes">
             <div class="btn-group">
                 <button id="confirmZoneBtn" class="btn btn-primary touch-target">Ajouter</button>
                 <button id="cancelZoneBtn" class="btn btn-secondary touch-target">Annuler</button>
@@ -2769,13 +2931,13 @@
     <script src="micEngine.js" defer></script>
 
     <!-- Modules socles (ordre strict) -->
-    <script src="engine.js?v=20260916-2" defer></script>
-    <script src="storage.js" defer></script>
-    <script src="storage-proxy.js" defer></script>
+    <script src="engine.js?v=20261009-3" defer></script>
+    <script src="storage.js?v=20261010-1" defer></script>
+    <script src="storage-proxy.js?v=20261011-1" defer></script>
     <script src="geoUtils.js" defer></script>
     <script src="coordUtils.js" defer></script>
     <script src="gpsConverter.js" defer></script>
-    <script src="controller.js?v=20260917-1" defer></script>
+    <script src="controller.js?v=20261011-1" defer></script>
 
     <!-- ✅ v9.3 : NOUVEAU MODULE dataResolver.js -->
     <!-- Placé après controller.js et avant ui.js -->
@@ -2786,13 +2948,16 @@
     <script src="offline-sync.js" defer></script>
 
     <!-- UI et façade de contrôle -->
-    <script src="ui.js?v=20260917-3" defer></script>
+    <!-- field-sync.js : synchronisation automatique des champs partageant la même information -->
+    <script src="field-sync.js?v=20261010-1" defer></script>
+    <script src="ui.js?v=20261011-1" defer></script>
     <script src="gisIntegration.js" defer></script>
     <script src="errorManager.js" defer></script>
-    <script src="cp-controller.js?v=20260917-1" defer></script>
-    <script src="ICCPOptimizationEngine.js" defer></script>
+    <script src="cp-controller.js?v=20261009-3" defer></script>
+    <script src="ICCPOptimizationEngine.js?v=20261010-1" defer></script>
+    <script src="AnodesOptimizationEngine.js?v=20261010-1" defer></script>
     <script src="cableLengthEngine.js" defer></script>
-    <script src="app.js?v=20260916-2" defer></script>
+    <script src="app.js?v=20261002-2" defer></script>
 
         <!-- Modules 3D -->
     <script src="shaders.js" defer></script>
@@ -2819,17 +2984,42 @@
     <script>
         // Support direct deep-linking from SaaS Dashboard (e.g. /studio#iccp)
         window.addEventListener('DOMContentLoaded', () => {
+            const aliases = {
+                'equipement': 'equipements',
+                'equipements': 'equipements',
+                'equipment': 'equipements',
+                'iccp': 'iccp',
+                'systeme-iccp': 'iccp',
+                'corrosivite': 'corrosivite',
+                'etude-corrosivite': 'corrosivite',
+                'cartography': 'cartography',
+                'cartographie': 'cartography',
+                'sig': 'cartography',
+                'dashboard': 'dashboard',
+                'overview': 'dashboard',
+                'vue-densemble': 'dashboard'
+            };
+
             const checkHash = () => {
-                const hash = window.location.hash.replace('#', '');
-                if (hash && window.CPController && typeof window.CPController.switchModule === 'function') {
-                    window.CPController.switchModule(hash);
-                } else if (hash && window.UI && typeof window.UI.switchModule === 'function') {
-                    window.UI.switchModule(hash);
+                const rawHash = (new URLSearchParams(window.location.search).get('module') || window.location.hash || '').replace('#', '').trim();
+                const resolvedHash = aliases[String(rawHash).toLowerCase()] || String(rawHash || '').toLowerCase();
+
+                if (!resolvedHash) return;
+
+                if (window.UI && typeof window.UI.switchModule === 'function') {
+                    window.UI.switchModule(resolvedHash);
+                    return;
+                }
+
+                if (window.CPController && typeof window.CPController.switchModule === 'function') {
+                    window.CPController.switchModule(resolvedHash);
                 }
             };
+
             setTimeout(checkHash, 400);
             setTimeout(checkHash, 1200);
             window.addEventListener('hashchange', checkHash);
+            window.addEventListener('popstate', checkHash);
         });
     </script>
 </body>

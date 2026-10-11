@@ -721,12 +721,28 @@ const UI = (function() {
 
             const elNace = getDomElement('kpiCompliance');
             if (elNace) {
-                const offPot = (state.cp && state.cp.requiredOnPotential)
-                            || (state.project && state.project.targetPotential)
-                            || -850;
-                elNace.innerText = offPot <= -850 ? 'OK' : 'NOK';
-                elNace.style.color = offPot <= -850
-                    ? 'var(--accent-green)' : 'var(--accent-red)';
+                // FIX-C6 (2026-10-09) : l'ancienne logique « OK si V ≤ −850 »
+                // affichait « OK » pour n'importe quelle valeur aberrante
+                // (ex. −2087 mV). Maintenant : calcul requis + fenêtre
+                // normative [−1100 ; −850] mV + faisabilité SACP.
+                const cpRes = (state.cp && state.cp.lastCalculation && state.cp.lastCalculation.results) || null;
+                const onMv = (cpRes && typeof cpRes.requiredOnMv === 'number' && isFinite(cpRes.requiredOnMv))
+                    ? cpRes.requiredOnMv
+                    : ((state.cp && typeof state.cp.requiredOnPotential === 'number' &&
+                        isFinite(state.cp.requiredOnPotential) && state.cp.requiredOnPotential !== 0)
+                        ? state.cp.requiredOnPotential : null);
+                let txt = '—';
+                let ok = null;
+                if (onMv !== null) {
+                    const boundsOk = onMv <= -850 && onMv >= -1100;
+                    const feasOk = !cpRes || cpRes.feasible !== false;
+                    ok = boundsOk && feasOk;
+                    txt = ok ? 'OK' : 'NOK';
+                }
+                elNace.innerText = txt;
+                elNace.style.color = ok === null
+                    ? 'var(--text-muted, #888)'
+                    : (ok ? 'var(--accent-green)' : 'var(--accent-red)');
             }
 
             const elEquipCurr = getDomElement('kpiEquipmentTotal');
@@ -1241,16 +1257,28 @@ const UI = (function() {
 
         if (tableBody) {
             let html = '';
+            // FIX-C1/C2/C4/C5 (2026-10-09) : formules alignées sur le moteur.
+            const legacy = (results.availableDriveV === undefined); // ancien modèle V_ON
             const rows = [
-                { label: 'Courant de protection', value: (results.current || 0).toFixed(3), unit: 'A', formula: 'I = S × (1-ε) × DF × k × J / 1000' },
-                { label: 'Surface exposée (défauts)', value: (results.exposedArea || 0).toFixed(2), unit: 'm²', formula: 'S_exp = S × (1-ε) × DF × k' },
-                { label: 'Résistance d\'anode (Dwight)', value: (results.R_anode || 0).toFixed(4), unit: 'Ω', formula: 'R = ρ/(2πL) × [ln(4L/d) - 1]' },
-                { label: 'Résistance des câbles', value: (results.R_cable || 0).toFixed(4), unit: 'Ω', formula: 'R = 2 × ρ_cu × L / S (aller-retour)' },
+                { label: 'Courant de protection', value: (results.current || 0).toFixed(3), unit: 'A', formula: 'I = S × min(DF × k, 1) × J / 1000 (ISO 15589-1 §7.3 / SP0169)' },
+                { label: 'Surface exposée (défauts)', value: (results.exposedArea || 0).toFixed(2), unit: 'm²', formula: 'S_exp = S × min(DF × k, 1)' },
+                { label: 'Résistance d\'anode (Dwight)', value: (results.R_anode || 0).toFixed(4), unit: 'Ω', formula: 'R = ρ/(2πL) × [ln(8L/d) − 1] (Dwight/IEEE 142, d = Ø)' },
+                { label: 'Résistance des câbles', value: (results.R_cable || 0).toFixed(4), unit: 'Ω', formula: results.cablePathFactor === 1 ? 'R = ρ_cu × L_total / S (longueur totale aller-retour)' : 'R = 2 × ρ_cu × L / S (aller-retour)' },
                 { label: 'Résistance de structure', value: (results.R_struct || 0).toFixed(4), unit: 'Ω', formula: 'Paramètre utilisateur' },
                 { label: 'Résistance totale du circuit', value: (results.R_total || 0).toFixed(4), unit: 'Ω', formula: 'R_total = R_anode + R_cable + R_struct' },
-                { label: 'IR Drop', value: (results.irDrop || 0).toFixed(3), unit: 'V', formula: 'IR = I × R_total' },
-                { label: 'Potentiel ON requis', value: (results.requiredOnMv || 0).toFixed(0), unit: 'mV vs Cu/CuSO₄', formula: 'V_ON = V_OFF_cible - IR' }
+                { label: 'Chute ohmique totale (circuit)', value: (results.irDrop || 0).toFixed(3), unit: 'V', formula: 'IR = I × R_total — hors champ IR structure→référence (SP0169)' },
+                legacy
+                    ? { label: 'Potentiel ON requis (ancien modèle)', value: (results.requiredOnMv || 0).toFixed(0), unit: 'mV vs Cu/CuSO₄', formula: 'V_ON = V_cible − I × R_total (obsolète — relancez Calculer CP)' }
+                    : { label: 'Potentiel ON requis (critère)', value: (results.requiredOnMv || 0).toFixed(0), unit: 'mV vs Cu/CuSO₄', formula: 'SP0169 (a) : V_ON ≤ −850 mV ; instant-off ≥ −750 mV ; surprotection > −1100 mV' }
             ];
+            if (!legacy) {
+                rows.push(
+                    { label: 'Tension disponible anode', value: Number(results.availableDriveV || 0).toFixed(3), unit: 'V', formula: 'ΔV = |E_anode − V_cible| (force motrice)' },
+                    { label: 'Courant max / anode (fin de vie)', value: (Number(results.iMaxAnodeA || 0) * 1000).toFixed(1), unit: 'mA', formula: 'I_max = ΔV / (R_total × k_R)' },
+                    { label: 'Part de courant / anode (I/N)', value: (Number(results.iShareA || 0) * 1000).toFixed(1), unit: 'mA', formula: `N = ${results.anodeCount || 1} anode(s) déclaré(s) dans le système` },
+                    { label: 'Faisabilité SACP', value: results.feasible ? 'OK' : 'INSUFFISANT', unit: '', formula: 'I_max ≥ I/N (anode sacrificielle, fin de vie)' }
+                );
+            }
             rows.forEach(row => {
                 html += `<tr>
                     <td>${row.label}</td>
@@ -1716,6 +1744,8 @@ const UI = (function() {
             if (gb.results && gb.results.R_total) {
                 displayGroundbedResults(gb.results, params.totalDepth, params.activeDepth, params.anodeCount, params.anodeLength);
                 getDomElement('gbResultsCard').style.display = 'block';
+                const calcCard = getDomElement('gbCalcCard');
+                if (calcCard) calcCard.style.display = 'block';
             }
         } else {
             title.innerText = 'Créer un puits';
@@ -1728,6 +1758,8 @@ const UI = (function() {
                 }
             });
             getDomElement('gbResultsCard').style.display = 'none';
+            const calcCard = getDomElement('gbCalcCard');
+            if (calcCard) calcCard.style.display = 'none';
         }
         formCard.scrollIntoView({ behavior: 'smooth' });
     }
@@ -2624,6 +2656,15 @@ const UI = (function() {
         const container = getDomElement('gbEquipmentList');
         if (!container) return;
         const projectId = getDomElement('gbProjectSelect')?.value;
+        const activeProjectId = projectId || ProjectManager.getCurrentProjectId() || '';
+        const state = ProjectManager.getState();
+        if (container.dataset.projectId !== activeProjectId) {
+            const persistedIds = state.groundbed?.selectedPipelineIds ||
+                state.groundbed?.lastCalculation?.selectedPipelineIds ||
+                ProjectManager.getActiveSystem()?.params?.groundbed?.selectedPipelineIds || [];
+            container.dataset.selected = JSON.stringify(persistedIds);
+            container.dataset.projectId = activeProjectId;
+        }
         let equipments = ProjectManager.getState().equipments.filter(eq => eq.projectId === projectId &&
             isResistiveEquipment(eq));
         if (!projectId) {
@@ -2660,12 +2701,17 @@ const UI = (function() {
             if (eq) totalSurface += getCanonicalEquipmentSurface(eq);
         });
         container.dataset.selected = JSON.stringify(selectedIds);
+        const projectGroundbed = ProjectManager.getState().groundbed || (ProjectManager.getState().groundbed = { results: null });
+        const previousIds = JSON.stringify(projectGroundbed.selectedPipelineIds || []);
+        projectGroundbed.selectedPipelineIds = selectedIds;
         const targetInput = getDomElement('gbTargetCurrent');
         const activeSys = ProjectManager.getActiveSystem();
         if (activeSys) {
             const gbParams = ProjectManager.loadSystemParams(activeSys.id, 'groundbed') || {};
             gbParams.selectedPipelineIds = selectedIds;
             ProjectManager.saveSystemParams(activeSys.id, 'groundbed', gbParams);
+        } else if (previousIds !== JSON.stringify(selectedIds)) {
+            ProjectManager.saveCurrentProject();
         }
 
         // Use the central CP/ICCP priority resolver after the selection is saved.
@@ -2886,82 +2932,84 @@ const UI = (function() {
     // ============================================================
     // drawGroundbedVisual
     // ============================================================
-    function drawGroundbedVisual(totalDepth, activeDepth, anodeCount, anodeLength, spacing) {
-        const canvas = getDomElement('gbChart');
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        const dpr = window.devicePixelRatio || 1;
-        const rect = canvas.getBoundingClientRect();
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-        ctx.scale(dpr, dpr);
-        const w = rect.width;
-        const h = rect.height;
-        const margin = 40;
-        ctx.clearRect(0, 0, w, h);
-        ctx.fillStyle = 'rgba(10, 14, 23, 0.5)';
-        ctx.fillRect(0, 0, w, h);
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '12px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Schéma du puits anodique', w / 2, 18);
-        const wellX = w / 2;
-        const wellTop = margin + 10;
-        const wellBottom = h - margin - 10;
-        const wellWidth = 20;
-        ctx.strokeStyle = '#64748b';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(0, wellTop);
-        ctx.lineTo(w, wellTop);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '10px sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText('Surface', 5, wellTop - 4);
-        const leftX = wellX - wellWidth / 2;
-        const rightX = wellX + wellWidth / 2;
-        ctx.strokeStyle = '#64748b';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(leftX, wellTop);
-        ctx.lineTo(leftX, wellBottom);
-        ctx.moveTo(rightX, wellTop);
-        ctx.lineTo(rightX, wellBottom);
-        ctx.stroke();
-        const activeTop = wellBottom - (activeDepth / totalDepth) * (wellBottom - wellTop);
-        const activeGrad = ctx.createLinearGradient(wellX - wellWidth, activeTop, wellX + wellWidth, wellBottom);
-        activeGrad.addColorStop(0, 'rgba(6, 182, 212, 0.2)');
-        activeGrad.addColorStop(1, 'rgba(6, 182, 212, 0.6)');
-        ctx.fillStyle = activeGrad;
-        ctx.fillRect(leftX, activeTop, wellWidth, wellBottom - activeTop);
-        const anodeSpacing = (wellBottom - activeTop) / (anodeCount + 1);
-        const anodeHeight = Math.min(anodeSpacing * 0.6, 20);
-        const anodeWidth = wellWidth * 0.5;
-        for (let i = 0; i < anodeCount; i++) {
-            const y = activeTop + (i + 1) * anodeSpacing - anodeHeight / 2;
-            const grad = ctx.createLinearGradient(wellX - anodeWidth, y, wellX + anodeWidth, y + anodeHeight);
-            grad.addColorStop(0, '#06b6d4');
-            grad.addColorStop(0.5, '#3b82f6');
-            grad.addColorStop(1, '#06b6d4');
-            ctx.fillStyle = grad;
-            ctx.shadowColor = '#06b6d4';
-            ctx.shadowBlur = 8;
-            ctx.fillRect(wellX - anodeWidth / 2, y, anodeWidth, anodeHeight);
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = '#e2e8f0';
-            ctx.font = '8px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText(`A${i + 1}`, wellX, y + anodeHeight / 2 + 3);
-        }
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '9px sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText('0 m', rightX + 8, wellTop + 4);
-        ctx.fillText(`${totalDepth} m`, rightX + 8, wellBottom + 4);
-        ctx.fillText(`${Math.round(activeDepth)} m (actif)`, rightX + 8, activeTop + 4);
+    function drawGroundbedVisual(totalDepth, activeDepth, anodeCount, anodeLength, spacing, result) {
+        const host = getDomElement('gbChart');
+        if (!host) return;
+
+        const safeNumber = (value, fallback) => {
+            const n = Number(value);
+            return Number.isFinite(n) && n > 0 ? n : fallback;
+        };
+        const fmt = (value, digits, fallback = '—') => {
+            const n = Number(value);
+            return Number.isFinite(n) ? n.toFixed(digits) : fallback;
+        };
+        const escape = (value) => (window.Utils && typeof Utils.escapeHtml === 'function')
+            ? Utils.escapeHtml(String(value))
+            : String(value).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+        totalDepth = safeNumber(totalDepth, 200);
+        activeDepth = Math.min(safeNumber(activeDepth, 150), totalDepth);
+        anodeCount = Math.max(1, Math.round(safeNumber(anodeCount, 16)));
+        anodeLength = safeNumber(anodeLength, 1.5);
+        spacing = safeNumber(spacing, activeDepth / (anodeCount + 1));
+
+        const lifeDesign = (result && typeof result.lifeDesign === 'number' && result.lifeDesign > 0)
+            ? result.lifeDesign
+            : ((result && typeof result.lifeWithSafety === 'number') ? Math.min(result.lifeWithSafety, 25) : null);
+        const waterDepth = Math.round(totalDepth * 0.42);
+        const activeTopDepth = Math.max(0, totalDepth - activeDepth);
+        const visibleAnodes = Math.min(anodeCount, 18);
+        const anodeLabels = Array.from({ length: visibleAnodes }, (_, i) => {
+            const y = 305 + ((i + 1) * 245 / (visibleAnodes + 1));
+            return `<rect x="397" y="${(y - 6).toFixed(1)}" width="26" height="12" rx="6" fill="url(#gbAnodeGradient)"><title>Anode ${i + 1}${anodeCount > visibleAnodes ? ' / représentation condensée' : ''} — longueur ${fmt(anodeLength, 1)} m</title></rect>`;
+        }).join('');
+        const moreAnodes = anodeCount > visibleAnodes
+            ? `<text x="410" y="565" class="gb-svg-small gb-svg-center">+${anodeCount - visibleAnodes} anodes</text>`
+            : '';
+
+        host.innerHTML = `
+            <svg class="gb-modern-svg" viewBox="0 0 980 660" role="img" aria-label="Schéma technique moderne du puits anodique">
+                <defs>
+                    <linearGradient id="gbSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eef6ff"/><stop offset="1" stop-color="#f8fafc"/></linearGradient>
+                    <linearGradient id="gbSoilTop" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c08457"/><stop offset="1" stop-color="#8b5a2b"/></linearGradient>
+                    <linearGradient id="gbClay" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a16207"/><stop offset="1" stop-color="#78350f"/></linearGradient>
+                    <linearGradient id="gbSand" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient>
+                    <linearGradient id="gbRock" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#64748b"/><stop offset="1" stop-color="#334155"/></linearGradient>
+                    <linearGradient id="gbWater" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#38bdf8" stop-opacity="0.25"/><stop offset="1" stop-color="#0284c7" stop-opacity="0.42"/></linearGradient>
+                    <linearGradient id="gbAnodeGradient" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fed7aa"/><stop offset="0.48" stop-color="#f97316"/><stop offset="1" stop-color="#c2410c"/></linearGradient>
+                    <filter id="gbShadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#0f172a" flood-opacity="0.20"/></filter>
+                    <pattern id="gbDots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="6" cy="8" r="1.4" fill="#451a03" opacity="0.24"/><circle cx="20" cy="18" r="1.1" fill="#7c2d12" opacity="0.22"/></pattern>
+                    <marker id="gbArrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/></marker>
+                </defs>
+                <rect width="980" height="660" rx="18" fill="url(#gbSky)"/>
+                <text x="34" y="34" class="gb-svg-title">Schéma technique — Puits anodique profond</text>
+
+                <g class="gb-svg-badge" tabindex="0"><title>Résistance électrique totale du puits, câbles et structure inclus si modélisés</title><rect x="34" y="52" width="190" height="58" rx="16" fill="#fff" stroke="#2563eb" stroke-width="2" filter="url(#gbShadow)"/><circle cx="58" cy="81" r="9" fill="#2563eb"/><text x="76" y="76" class="gb-svg-badge-label">Résistance</text><text x="76" y="98" class="gb-svg-badge-value" fill="#2563eb">${fmt(result && result.R_total, 4)} Ω</text></g>
+                <g class="gb-svg-badge" tabindex="0"><title>Courant total injecté par le groundbed</title><rect x="244" y="52" width="170" height="58" rx="16" fill="#fff" stroke="#f97316" stroke-width="2" filter="url(#gbShadow)"/><circle cx="268" cy="81" r="9" fill="#f97316"/><text x="286" y="76" class="gb-svg-badge-label">Courant</text><text x="286" y="98" class="gb-svg-badge-value" fill="#f97316">${fmt(result && result.I_total, 2)} A</text></g>
+                <g class="gb-svg-badge" tabindex="0"><title>Tension minimale du redresseur requise pour le point de fonctionnement calculé</title><rect x="434" y="52" width="170" height="58" rx="16" fill="#fff" stroke="#0ea5e9" stroke-width="2" filter="url(#gbShadow)"/><circle cx="458" cy="81" r="9" fill="#0ea5e9"/><text x="476" y="76" class="gb-svg-badge-label">Tension</text><text x="476" y="98" class="gb-svg-badge-value" fill="#0ea5e9">${fmt(result && result.V_rectifier, 1)} V</text></g>
+                <g class="gb-svg-badge" tabindex="0"><title>Durée de vie de conception affichée après application des règles de plafonnement du projet</title><rect x="624" y="52" width="190" height="58" rx="16" fill="#fff" stroke="#22c55e" stroke-width="2" filter="url(#gbShadow)"/><circle cx="648" cy="81" r="9" fill="#22c55e"/><text x="666" y="76" class="gb-svg-badge-label">Durée de vie</text><text x="666" y="98" class="gb-svg-badge-value" fill="#22c55e">${fmt(lifeDesign, 1)} ans</text></g>
+
+                <g class="gb-svg-layer" tabindex="0"><title>Couche de remblai et sol meuble</title><path d="M0 194 C100 180 190 204 290 190 C390 175 490 204 590 190 C690 176 780 196 980 184 L980 290 L0 290 Z" fill="url(#gbSoilTop)"/><path d="M0 194 C100 180 190 204 290 190 C390 175 490 204 590 190 C690 176 780 196 980 184 L980 290 L0 290 Z" fill="url(#gbDots)"/><text x="730" y="245" class="gb-svg-layer-text">Remblai / sol meuble</text></g>
+                <g class="gb-svg-layer" tabindex="0"><title>Couche d’argile</title><path d="M0 290 C100 300 200 275 310 290 C420 305 520 275 630 290 C740 303 850 280 980 285 L980 395 L0 395 Z" fill="url(#gbClay)"/><text x="760" y="352" class="gb-svg-layer-text gb-svg-light">Argile</text></g>
+                <g class="gb-svg-layer" tabindex="0"><title>Sable humide, zone favorable à la diffusion du courant</title><path d="M0 395 C110 382 220 408 330 395 C440 380 550 408 660 395 C770 382 870 402 980 390 L980 500 L0 500 Z" fill="url(#gbSand)"/><text x="730" y="456" class="gb-svg-layer-text">Sable humide</text></g>
+                <g class="gb-svg-layer" tabindex="0"><title>Substratum rocheux</title><path d="M0 500 C120 518 230 484 350 502 C470 520 580 484 700 502 C820 518 900 492 980 500 L980 660 L0 660 Z" fill="url(#gbRock)"/><text x="730" y="575" class="gb-svg-layer-text gb-svg-light">Roche / substratum</text></g>
+
+                <g class="gb-svg-hotspot" tabindex="0"><title>Niveau d’eau souterraine estimatif : ${waterDepth} m</title><rect x="0" y="365" width="980" height="135" fill="url(#gbWater)"/><path d="M0 365 C50 355 100 376 150 365 C200 355 250 376 300 365 C350 355 400 376 450 365 C500 355 550 376 600 365 C650 355 700 376 750 365 C800 355 850 376 900 365 C935 358 960 361 980 365" fill="none" stroke="#075985" stroke-width="4" stroke-dasharray="9 7"/><rect x="64" y="328" width="240" height="30" rx="9" fill="#f0f9ff" stroke="#0369a1" stroke-width="1.5"/><text x="78" y="349" class="gb-svg-water">Niveau d’eau ≈ ${waterDepth} m</text></g>
+
+                <g class="gb-svg-hotspot" tabindex="0"><title>Tête de puits avec capot de protection et sortie câble anodique</title><rect x="344" y="156" width="132" height="29" rx="9" fill="#334155" stroke="#0f172a" stroke-width="2"/><rect x="366" y="126" width="88" height="36" rx="11" fill="#f97316" stroke="#c2410c" stroke-width="3" filter="url(#gbShadow)"/><circle cx="388" cy="144" r="4" fill="#fff7ed"/><circle cx="432" cy="144" r="4" fill="#fff7ed"/><text x="486" y="151" class="gb-svg-callout-title">Tête de puits</text></g>
+                <g class="gb-svg-hotspot" tabindex="0"><title>Câble anodique isolé — sortie latérale directe, sans croisement</title><path d="M410 268 L410 185 L530 185 Q550 185 550 165 L550 142 Q550 122 570 122 L682 122" fill="none" stroke="#1d4ed8" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M410 268 L410 185 L530 185 Q550 185 550 165 L550 142 Q550 122 570 122 L682 122" fill="none" stroke="#bfdbfe" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><rect x="682" y="108" width="174" height="30" rx="10" fill="#eff6ff" stroke="#1d4ed8" stroke-width="2"/><text x="698" y="128" class="gb-svg-callout-small">Vers redresseur</text></g>
+                <g class="gb-svg-hotspot" tabindex="0"><title>Forage du puits — profondeur totale ${fmt(totalDepth, 0)} m, zone active ${fmt(activeDepth, 0)} m, départ actif ≈ ${fmt(activeTopDepth, 0)} m</title><rect x="344" y="180" width="132" height="450" rx="58" fill="#0f172a" opacity="0.17"/><rect x="365" y="188" width="90" height="430" rx="45" fill="#e2e8f0" stroke="#64748b" stroke-width="3"/><rect x="382" y="212" width="56" height="378" rx="28" fill="#111827" opacity="0.93"/><text x="462" y="239" class="gb-svg-small">Zone active ≈ ${fmt(activeDepth, 0)} m</text></g>
+                <g class="gb-svg-hotspot" tabindex="0"><title>Remblai conducteur carboné autour des anodes</title><rect x="390" y="280" width="40" height="298" rx="20" fill="#020617"/><circle cx="400" cy="308" r="2" fill="#94a3b8"/><circle cx="423" cy="345" r="2" fill="#94a3b8"/><circle cx="402" cy="398" r="2" fill="#94a3b8"/><circle cx="422" cy="460" r="2" fill="#94a3b8"/><circle cx="404" cy="545" r="2" fill="#94a3b8"/></g>
+                <g class="gb-svg-hotspot" tabindex="0"><title>${anodeCount} anode(s), espacement moyen ${fmt(spacing, 2)} m</title>${anodeLabels}${moreAnodes}<path d="M410 288 L410 578" stroke="#fed7aa" stroke-width="2" opacity="0.55"/></g>
+                <g class="gb-svg-hotspot" tabindex="0"><title>Lignes indicatives de diffusion du courant dans le sol</title><ellipse cx="410" cy="416" rx="76" ry="145" fill="none" stroke="#f97316" stroke-width="2" stroke-dasharray="7 8" opacity="0.70"/><ellipse cx="410" cy="416" rx="128" ry="198" fill="none" stroke="#f97316" stroke-width="2" stroke-dasharray="7 9" opacity="0.46"/><ellipse cx="410" cy="416" rx="182" ry="250" fill="none" stroke="#f97316" stroke-width="2" stroke-dasharray="7 10" opacity="0.28"/></g>
+
+                <g><line x1="432" y1="410" x2="622" y2="330" stroke="#2563eb" stroke-width="2" marker-end="url(#gbArrow)"/><rect x="622" y="292" width="250" height="70" rx="14" fill="#fff" filter="url(#gbShadow)"/><text x="642" y="318" class="gb-svg-callout-title">Anodes actives</text><text x="642" y="340" class="gb-svg-callout-small">${anodeCount} unités • espacement ${fmt(spacing, 2)} m</text></g>
+                <g><line x1="382" y1="530" x2="208" y2="550" stroke="#2563eb" stroke-width="2" marker-end="url(#gbArrow)"/><rect x="58" y="518" width="205" height="62" rx="14" fill="#fff" filter="url(#gbShadow)"/><text x="78" y="544" class="gb-svg-callout-title">Remblai conducteur</text><text x="78" y="566" class="gb-svg-callout-small">Coke / matériau carboné</text></g>
+
+                <g class="gb-svg-hotspot" tabindex="0"><title>Échelle indicative de profondeur</title><line x1="48" y1="190" x2="48" y2="630" stroke="#0f172a" stroke-width="3"/>${[0, 0.25, 0.5, 0.75, 1].map((r) => { const y = 190 + r * 440; const d = Math.round(r * totalDepth); return `<line x1="40" y1="${y}" x2="57" y2="${y}" stroke="#0f172a" stroke-width="2.5"/><rect x="62" y="${y - 12}" width="54" height="23" rx="6" fill="#f8fafc" stroke="#334155" stroke-width="1.2"/><text x="89" y="${y + 5}" class="gb-svg-scale" text-anchor="middle">${d} m</text>`; }).join('')}</g>
+                <g transform="translate(685 608)"><rect x="0" y="0" width="248" height="38" rx="13" fill="#fff" opacity="0.96"/><circle cx="20" cy="19" r="7" fill="#f97316"/><text x="34" y="24" class="gb-svg-legend">Anode / courant</text><circle cx="145" cy="19" r="7" fill="#2563eb"/><text x="159" y="24" class="gb-svg-legend">Câble</text></g>
+            </svg>`;
     }
 
     // ============================================================
@@ -3776,12 +3824,17 @@ const UI = (function() {
         showToast(posts.length + ' postes de test générés.', 'success');
     }
 
-    function renderPosts(posts) {
+    function renderPosts(posts, persist = true) {
         const container = getDomElement('testPostsResult');
         if (!container) return;
 
+        const testPostState = ProjectManager.getState().testPosts ||
+            (ProjectManager.getState().testPosts = { posts: [], totalLength: 0, spacing: 0 });
+        testPostState.posts = posts;
+
         if (posts.length === 0) {
             container.innerHTML = '<div class="info-message">Aucun poste généré.</div>';
+            if (persist) ProjectManager.saveCurrentProject();
             return;
         }
 
@@ -3802,14 +3855,7 @@ const UI = (function() {
         html += '</tbody></table></div>';
         container.innerHTML = html;
 
-        try {
-            if (typeof ProjectManager !== 'undefined') {
-                const st = ProjectManager.getState();
-                if (st && st.testPosts) {
-                    st.testPosts.posts = posts;
-                }
-            }
-        } catch (e) {}
+        if (persist) ProjectManager.saveCurrentProject();
     }
 
     function setupTestPostsForm() {
@@ -4121,6 +4167,204 @@ const UI = (function() {
         });
     }
 
+    function captureCalculationForm(formId) {
+        const form = getDomElement(formId);
+        if (!form) return {};
+        const values = {};
+        form.querySelectorAll('input[id], select[id], textarea[id]').forEach(field => {
+            values[field.id] = field.type === 'checkbox' || field.type === 'radio'
+                ? field.checked
+                : field.value;
+        });
+        return values;
+    }
+
+    function restoreCalculationForm(formId, values) {
+        const form = getDomElement(formId);
+        if (!form || !values) return;
+        Object.entries(values).forEach(([id, value]) => {
+            const field = getDomElement(id);
+            if (!field || !form.contains(field)) return;
+            if (field.type === 'checkbox' || field.type === 'radio') field.checked = Boolean(value);
+            else if (value !== undefined && value !== null) field.value = String(value);
+        });
+        form.querySelectorAll('select').forEach(select => {
+            const manual = getDomElement(`${select.id}Manual`);
+            if (manual) manual.style.display = select.value === 'manual' ? 'block' : 'none';
+        });
+    }
+
+    function captureProjectModuleInputs() {
+        const values = {};
+        document.querySelectorAll('.module input[id], .module select[id], .module textarea[id]').forEach(field => {
+            if (field.type === 'file') return;
+            values[field.id] = field.type === 'checkbox' || field.type === 'radio'
+                ? field.checked
+                : field.value;
+        });
+        return values;
+    }
+
+    function restoreProjectModuleInputs(values) {
+        if (!values || typeof values !== 'object') return;
+        Object.entries(values).forEach(([id, value]) => {
+            const field = getDomElement(id);
+            if (!field || !field.closest('.module') || field.type === 'file') return;
+            if (field.type === 'checkbox' || field.type === 'radio') field.checked = Boolean(value);
+            else if (value !== undefined && value !== null) field.value = String(value);
+        });
+        document.querySelectorAll('.module select').forEach(select => {
+            const manual = getDomElement(`${select.id}Manual`);
+            if (manual) manual.style.display = select.value === 'manual' ? 'block' : 'none';
+        });
+    }
+
+    function persistCalculationInputs() {
+        const state = ProjectManager.getState();
+        if (!state.calculationInputs) state.calculationInputs = {};
+        if (!state.groundbed) state.groundbed = { results: null };
+        state.calculationInputs.cp = captureCalculationForm('cpCalcForm');
+        state.calculationInputs.iccp = captureCalculationForm('iccpForm');
+        state.calculationInputs.groundbed = captureCalculationForm('groundbedForm');
+        state.moduleInputs = captureProjectModuleInputs();
+        const equipmentList = getDomElement('gbEquipmentList');
+        if (equipmentList) {
+            try {
+                state.groundbed.selectedPipelineIds = JSON.parse(equipmentList.dataset.selected || '[]');
+            } catch (error) {
+                state.groundbed.selectedPipelineIds = [];
+            }
+        }
+        ProjectManager.saveCurrentProject()
+            .then(saveSessionSnapshot)
+            .catch(error => console.warn('[UI] Sauvegarde des paramètres de calcul échouée:', error));
+    }
+
+    function setupCalculationInputPersistence() {
+        const persistDebounced = debounce(persistCalculationInputs, 450);
+        const moduleContent = getDomElement('mainContent');
+        if (!moduleContent || moduleContent.dataset.persistenceBound === 'true') return;
+        moduleContent.dataset.persistenceBound = 'true';
+        moduleContent.addEventListener('input', event => {
+            if (event.target?.matches('.module input[id], .module select[id], .module textarea[id]')) {
+                persistDebounced();
+            }
+        });
+        moduleContent.addEventListener('change', event => {
+            if (event.target?.matches('.module input[id], .module select[id], .module textarea[id]')) {
+                persistCalculationInputs();
+            }
+        });
+    }
+
+    function restoreLastCalculations() {
+        const state = ProjectManager.getState();
+        if (!state.groundbed) state.groundbed = { results: null };
+        const inputState = state.calculationInputs || {};
+        restoreCalculationForm('cpCalcForm', inputState.cp);
+        restoreCalculationForm('iccpForm', inputState.iccp);
+        restoreCalculationForm('groundbedForm', inputState.groundbed);
+        restoreProjectModuleInputs(state.moduleInputs);
+
+        const selectedPipelineIds = Array.isArray(state.groundbed.selectedPipelineIds)
+            ? state.groundbed.selectedPipelineIds
+            : (state.groundbed.lastCalculation?.selectedPipelineIds || []);
+        const equipmentList = getDomElement('gbEquipmentList');
+        if (equipmentList) {
+            equipmentList.dataset.selected = JSON.stringify(selectedPipelineIds);
+        }
+        populateGroundbedEquipmentList();
+
+        const cpCalculation = state.cp?.lastCalculation;
+        const cpResults = cpCalculation?.results || (Number(state.cp?.current) > 0 ? {
+            current: Number(state.cp.current),
+            irDrop: Number(state.cp.irDrop) || 0,
+            R_total: Number(state.cp.totalResistance) || 0,
+            exposedArea: Number(state.cp.exposedArea) || 0,
+            requiredOnMv: Number(state.cp.requiredOnPotential) || -850,
+            norm: state.project?.norm || 'ISO 15589-1'
+        } : null);
+        if (cpResults) {
+            displayCPResults(cpResults);
+            const resultsTab = document.querySelector('[data-tab-target="cp-results-panel"]');
+            if (resultsTab && !resultsTab.classList.contains('active')) resultsTab.click();
+        }
+
+        const iccpCalculation = state.iccp?.lastCalculation;
+        const iccpResults = iccpCalculation?.results || (Number(state.iccp?.current) > 0 ? {
+            currentTotal: Number(state.iccp.current),
+            currentPerAnode: Number(state.iccp.currentPerAnode) || 0,
+            voltageInitial: Number(state.iccp.voltage) || 0,
+            voltageFinal: Number(state.iccp.voltageFinal) || 0,
+            powerInitial: Number(state.iccp.powerInitial) || 0,
+            powerDesign: Number(state.iccp.powerDesign) || Number(state.iccp.power) || 0,
+            groupResistanceInitial: Number(state.iccp.groundbedResistance) || 0,
+            groundbedResistance: Number(state.iccp.groundbedResistance) || 0,
+            currentDensityAnode: Number(state.iccp.currentDensity) || 0,
+            lifeDesign: Number(state.iccp.lifeDesign) || Number(state.iccp.lifeEstimate) || 0,
+            lifeTheoretical: Number(state.iccp.lifeTheoretical) || 0,
+            densityOk: Boolean(state.iccp.densityOk),
+            requiredCurrent: Number(state.iccp.requiredCurrent) || 0,
+            currentMarginPercent: Number(state.iccp.currentMarginPercent) || 0,
+            iccpCurrentSource: state.iccp.iccpCurrentSource,
+            safetyFactorPower: Number(state.iccp.safetyFactorPower) || 1.15
+        } : null);
+        if (iccpResults) {
+            displayICCPResults(iccpResults);
+            displayRectifierResults({
+                calculatedRequirements: state.iccp.calculatedRequirements,
+                transformerRectifierSelection: state.iccp.transformerRectifierSelection
+            });
+        }
+
+        const legacyGroundbed = [...(state.groundbeds || [])]
+            .filter(groundbed => groundbed.results?.R_total > 0)
+            .sort((a, b) => String(a.updatedAt || '').localeCompare(String(b.updatedAt || '')))
+            .pop();
+        const groundbedCalculation = state.groundbed.lastCalculation || (legacyGroundbed ? {
+            params: legacyGroundbed.parameters || {},
+            results: legacyGroundbed.results,
+            selectedPipelineIds: legacyGroundbed.parameters?.selectedPipelineIds || []
+        } : (state.groundbed.results?.R_total > 0 ? {
+            params: {},
+            results: state.groundbed.results,
+            selectedPipelineIds
+        } : null));
+        if (groundbedCalculation?.results) {
+            const params = groundbedCalculation.params || {};
+            displayGroundbedResults(
+                groundbedCalculation.results,
+                params.totalDepth,
+                params.activeDepth,
+                params.anodeCount,
+                params.anodeLength
+            );
+            if (equipmentList) {
+                equipmentList.dataset.selected = JSON.stringify(
+                    groundbedCalculation.selectedPipelineIds || params.selectedPipelineIds || selectedPipelineIds
+                );
+                populateGroundbedEquipmentList();
+            }
+            const resultsTab = document.querySelector('[data-tab-target="groundbed-results-panel"]');
+            if (resultsTab && !resultsTab.classList.contains('active')) resultsTab.click();
+        }
+
+        updateCorrosivity();
+        refreshFieldMeasurementsTable();
+
+        const interferenceResults = state.interference?.lastCalculation?.results || state.interference?.results;
+        if (interferenceResults) {
+            displayInterferenceResults(interferenceResults);
+            const resultsTab = document.querySelector('[data-tab-target="if-results-panel"]');
+            if (resultsTab && !resultsTab.classList.contains('active')) resultsTab.click();
+        }
+
+        if (Array.isArray(state.testPosts?.posts) && state.testPosts.posts.length > 0) {
+            renderPosts(state.testPosts.posts, false);
+        }
+
+    }
+
     function loadProjectParams() {
         const state = ProjectManager.getState();
         const proj = state.project;
@@ -4157,6 +4401,12 @@ const UI = (function() {
         setSelectValue('envWaterTemp', proj.envWaterTemp);
         setSelectValue('envWaterDO', proj.envWaterDO);
         setSelectValue('cpEnvironment', proj.cpEnvironment);
+        restoreLastCalculations();
+        // Re-rendre les zones de renforcement restaurées depuis
+        // state.iccp.reinforcementZones (sinon la liste reste vide après F5
+        // car setupReinforcementZones() ne s'exécute qu'une fois, avant le
+        // chargement du projet — ROLE.txt §9).
+        renderReinforcementZones();
     }
 
     function setupAutoSaveFields() {
@@ -4200,21 +4450,44 @@ const UI = (function() {
         }
         AppState._reinforcementZonesListenersInstalled = true;
 
+        // Re-rendre les zones après CHAQUE chargement de projet (F5, changement
+        // de projet, restauration de backup) : loadProject() restaure
+        // state.iccp.reinforcementZones, mais le rendu initial a eu lieu avant.
+        document.addEventListener('projectLoaded', function() {
+            renderReinforcementZones();
+        });
+
         const addZoneBtn = getDomElement('addReinforcementZoneBtn');
         const confirmZoneBtn = getDomElement('confirmZoneBtn');
         const cancelZoneBtn = getDomElement('cancelZoneBtn');
         const analyzeBtn = getDomElement('analyzeReinforcementBtn');
         const autoDetectBtn = getDomElement('autoDetectZonesBtn');
 
+        function updateAnodesEstimate() {
+            const addCurrent = Utils.safeNumber(getDomElement('zoneAdditionalCurrent')?.value || '0.5');
+            const anodesCount = Math.max(1, Math.ceil(addCurrent / 0.3));
+            const anodesInput = getDomElement('zoneAnodesCount');
+            if (anodesInput) {
+                anodesInput.value = `${anodesCount} anode(s) sacrificielle(s) (approx. 0.30 A / anode)`;
+            }
+        }
+
+        const currentInput = getDomElement('zoneAdditionalCurrent');
+        if (currentInput) {
+            currentInput.addEventListener('input', updateAnodesEstimate);
+        }
+
         if (addZoneBtn) {
             addZoneBtn.addEventListener('click', function() {
                 getDomElement('reinforcementZoneModal').style.display = 'flex';
                 getDomElement('zoneName').value = 'Zone ' + ((ProjectManager.getState().iccp.reinforcementZones || []).length + 1);
                 getDomElement('zoneLocation').value = '';
-                getDomElement('zoneProblemType').value = 'other';
+                if (getDomElement('zoneLat')) getDomElement('zoneLat').value = '';
+                if (getDomElement('zoneLon')) getDomElement('zoneLon').value = '';
+                getDomElement('zoneProblemType').value = 'insufficient_current';
                 getDomElement('zoneCriticality').value = 'medium';
                 getDomElement('zoneAdditionalCurrent').value = '0.5';
-                getDomElement('zoneAnodesCount').value = '';
+                updateAnodesEstimate();
             });
         }
 
@@ -4225,21 +4498,66 @@ const UI = (function() {
                 const problemType = getDomElement('zoneProblemType').value;
                 const criticality = getDomElement('zoneCriticality').value;
                 const additionalCurrent = Utils.safeNumber(getDomElement('zoneAdditionalCurrent').value);
+                let rawLat = getDomElement('zoneLat')?.value?.trim();
+                let rawLon = getDomElement('zoneLon')?.value?.trim();
+
+                let lat = (rawLat !== undefined && rawLat !== '' && !isNaN(parseFloat(rawLat))) ? parseFloat(rawLat) : null;
+                let lon = (rawLon !== undefined && rawLon !== '' && !isNaN(parseFloat(rawLon))) ? parseFloat(rawLon) : null;
+
+                // Si les coordonnées GPS ne sont pas renseignées manuellement, essayer de trouver les coordonnées d'un équipement ou du pipeline
+                if (lat === null || lon === null) {
+                    const equipments = ProjectManager.getState().equipments || [];
+                    const matchEq = equipments.find(e => e.tag && location && e.tag.toLowerCase().includes(location.toLowerCase()));
+                    if (matchEq && matchEq.gps && matchEq.gps.lat) {
+                        lat = parseFloat(matchEq.gps.lat);
+                        lon = parseFloat(matchEq.gps.lon);
+                    } else if (matchEq && matchEq.coordinates && matchEq.coordinates[0]) {
+                        lat = parseFloat(matchEq.coordinates[0].lat);
+                        lon = parseFloat(matchEq.coordinates[0].lon);
+                    } else {
+                        // Fallback vers le premier équipement ou pipeline du projet
+                        const pipe = equipments.find(e => (e.type === 'pipeline_enterre' || e.type === 'pipeline_offshore') && (e.coordinates?.length > 0 || e.gps));
+                        if (pipe) {
+                            if (pipe.coordinates && pipe.coordinates.length > 0) {
+                                const midIdx = Math.floor(pipe.coordinates.length / 2);
+                                lat = parseFloat(pipe.coordinates[midIdx].lat);
+                                lon = parseFloat(pipe.coordinates[midIdx].lon);
+                            } else if (pipe.gps) {
+                                lat = parseFloat(pipe.gps.lat);
+                                lon = parseFloat(pipe.gps.lon);
+                            }
+                        }
+                    }
+                }
+
+                const anodesCount = Math.max(1, Math.ceil(additionalCurrent / 0.3));
 
                 if (!name) { showToast('Veuillez saisir un nom.', 'warning'); return; }
                 if (additionalCurrent <= 0) { showToast('Le courant supplémentaire doit être > 0.', 'warning'); return; }
 
                 if (window.CPController && typeof window.CPController.addReinforcementZone === 'function') {
-                    window.CPController.addReinforcementZone(name, location, problemType, criticality, additionalCurrent);
+                    window.CPController.addReinforcementZone(name, location, problemType, criticality, additionalCurrent, lat, lon, anodesCount);
                 } else {
                     const zones = ProjectManager.getState().iccp.reinforcementZones || [];
-                    const zone = { id: Utils.generateId(), name, location, problemType, criticality, additionalCurrent };
+                    const zone = { 
+                        id: Utils.generateId(), 
+                        name, 
+                        location, 
+                        problemType, 
+                        criticality, 
+                        additionalCurrent,
+                        lat: lat,
+                        lon: lon,
+                        anodesCount: anodesCount
+                    };
                     zones.push(zone);
                     ProjectManager.getState().iccp.reinforcementZones = zones;
                     renderReinforcementZones();
-                    showToast(`Zone "${Utils.escapeHtml(name)}" ajoutée.`, 'success');
-                    ProjectManager.addHistoryEntry('iccp', `Ajout zone critique ${name}`, `${additionalCurrent} A`);
+                    showToast(`Zone "${Utils.escapeHtml(name)}" ajoutée (${anodesCount} anodes sacrificielles).`, 'success');
+                    ProjectManager.addHistoryEntry('iccp', `Ajout zone critique ${name}`, `${additionalCurrent} A (${anodesCount} anodes)`);
                     try { ProjectManager.saveCurrentProject(); } catch (err) { console.error(err); }
+                    document.dispatchEvent(new CustomEvent('refreshGIS'));
+                    document.dispatchEvent(new CustomEvent('refreshGIS3D'));
                 }
                 getDomElement('reinforcementZoneModal').style.display = 'none';
                 if (getDomElement('iccpResultsContent') && !getDomElement('iccpResultsContent').classList.contains('hidden')) {
@@ -4267,16 +4585,22 @@ const UI = (function() {
         const container = getDomElement('reinforcementZonesContainer');
         if (!container) return;
         const zones = ProjectManager.getState().iccp.reinforcementZones || [];
-        if (zones.length === 0) { container.innerHTML = '<div class="info-message">Aucune zone critique définie. Cliquez sur "Add Zone" pour ajouter une zone nécessitant un renforcement.</div>'; return; }
+        if (zones.length === 0) { container.innerHTML = '<div class="info-message">Aucune zone critique définie. Cliquez sur "Add Zone" pour ajouter une zone nécessitant un renforcement par anodes sacrificielles.</div>'; if (typeof renderReinforcementResults === 'function') renderReinforcementResults(); return; }
         let html = '';
         zones.forEach((zone, idx) => {
             const critClass = zone.criticality === 'high' ? 'high' : zone.criticality === 'medium' ? 'medium' : 'low';
+            const anodesCount = zone.anodesCount || Math.max(1, Math.ceil(Utils.safeNumber(zone.additionalCurrent) / 0.3));
+            const coordsText = (zone.lat && zone.lon) ? `<span title="Coordonnées GPS: ${zone.lat.toFixed(5)}, ${zone.lon.toFixed(5)}" style="color:#f97316; font-size:0.8rem; margin-left:4px;"><i class="fas fa-map-marker-alt"></i> GPS</span>` : '';
             html += `<div class="zone-item" data-index="${idx}" role="listitem">
-                <span class="zone-name">${Utils.escapeHtml(zone.name)}</span>
+                <span class="zone-name" style="display:flex; align-items:center; gap:6px;">
+                    <span style="color:#f97316; font-size:1rem;" title="Zone critique avec renforcement">🚩</span>
+                    <strong>${Utils.escapeHtml(zone.name)}</strong>
+                    ${coordsText}
+                </span>
                 <span class="zone-location">${Utils.escapeHtml(zone.location || '-')}</span>
                 <span class="zone-problem">${Utils.escapeHtml(zone.problemType || '-')}</span>
                 <span class="zone-criticality ${critClass}">${zone.criticality}</span>
-                <span class="zone-current">${Utils.safeNumber(zone.additionalCurrent).toFixed(2)} A</span>
+                <span class="zone-current">${Utils.safeNumber(zone.additionalCurrent).toFixed(2)} A <small style="color:var(--text-secondary); margin-left:4px;">(${anodesCount} anodes galva)</small></span>
                 <div class="zone-actions">
                     <button data-action="delete-zone" data-index="${idx}" aria-label="Supprimer la zone ${Utils.escapeHtml(zone.name)}" title="Supprimer"><i class="fas fa-trash" aria-hidden="true"></i></button>
                 </div>
@@ -4293,9 +4617,12 @@ const UI = (function() {
                     renderReinforcementZones();
                     showToast('Zone supprimée.', 'warning');
                     try { ProjectManager.saveCurrentProject(); } catch (err) { console.error(err); }
+                    document.dispatchEvent(new CustomEvent('refreshGIS'));
+                    document.dispatchEvent(new CustomEvent('refreshGIS3D'));
                 }
             });
         });
+        if (typeof renderReinforcementResults === 'function') renderReinforcementResults();
     }
 
     // ============================================================
@@ -4497,13 +4824,17 @@ const UI = (function() {
         }
         const placeholder = getDomElement('iccpPlaceholder');
         const resultsContent = getDomElement('iccpResultsContent');
+        const calcPlaceholder = getDomElement('iccpCalcPlaceholder');
+        const calcContent = getDomElement('iccpCalcContent');
         const tableBody = getDomElement('iccpTableBody');
-        if (!resultsContent || !tableBody) {
+        if (!tableBody) {
             console.warn('displayICCPResults: Éléments HTML non trouvés');
             return;
         }
         if (placeholder) placeholder.classList.add('hidden');
-        resultsContent.classList.remove('hidden');
+        if (resultsContent) resultsContent.classList.remove('hidden');
+        if (calcPlaceholder) calcPlaceholder.classList.add('hidden');
+        if (calcContent) calcContent.classList.remove('hidden');
 
         const currentEl = getDomElement('resICCPCurrent');
         const tensionEl = getDomElement('resICCPTension');
@@ -5249,13 +5580,27 @@ const UI = (function() {
         const equipments = state.equipments.filter(eq => eq.projectId === projectId && eq.included !== false);
         const zones = [];
         equipments.forEach(eq => {
+            let eqLat = null;
+            let eqLon = null;
+            if (eq.gps && eq.gps.lat && eq.gps.lon) {
+                eqLat = parseFloat(eq.gps.lat);
+                eqLon = parseFloat(eq.gps.lon);
+            } else if (eq.coordinates && eq.coordinates.length > 0) {
+                eqLat = parseFloat(eq.coordinates[0].lat);
+                eqLon = parseFloat(eq.coordinates[0].lon);
+            }
+
             if (eq.soilResistivity > 100) {
+                const addCurr = (eq.soilResistivity / 100) * 0.5;
                 zones.push({
-                    name: `Zone haute résistivité - ${eq.tag}`,
+                    name: `Haute résistivité - ${eq.tag}`,
                     location: eq.tag || 'Inconnu',
                     problemType: 'high_resistivity',
                     criticality: eq.soilResistivity > 500 ? 'high' : 'medium',
-                    additionalCurrent: (eq.soilResistivity / 100) * 0.5
+                    additionalCurrent: addCurr,
+                    lat: eqLat,
+                    lon: eqLon,
+                    anodesCount: Math.max(1, Math.ceil(addCurr / 0.3))
                 });
             }
         });
@@ -5265,12 +5610,25 @@ const UI = (function() {
                 const eqCurrent = eq.cpData.results.currentAmperes;
                 const expected = (eq.surface || 0) * 0.005;
                 if (eqCurrent < expected * 0.5 && expected > 0) {
+                    let eqLat = null;
+                    let eqLon = null;
+                    if (eq.gps && eq.gps.lat && eq.gps.lon) {
+                        eqLat = parseFloat(eq.gps.lat);
+                        eqLon = parseFloat(eq.gps.lon);
+                    } else if (eq.coordinates && eq.coordinates.length > 0) {
+                        eqLat = parseFloat(eq.coordinates[0].lat);
+                        eqLon = parseFloat(eq.coordinates[0].lon);
+                    }
+                    const addCurr = (expected - eqCurrent) * 1.2;
                     zones.push({
                         name: `Courant insuffisant - ${eq.tag}`,
                         location: eq.tag || 'Inconnu',
                         problemType: 'insufficient_current',
                         criticality: 'medium',
-                        additionalCurrent: (expected - eqCurrent) * 1.2
+                        additionalCurrent: addCurr,
+                        lat: eqLat,
+                        lon: eqLon,
+                        anodesCount: Math.max(1, Math.ceil(addCurr / 0.3))
                     });
                 }
             }
@@ -5291,6 +5649,140 @@ const UI = (function() {
         ProjectManager.saveCurrentProject();
         showToast(`✅ ${zones.length} zone(s) critique(s) détectée(s) et ajoutée(s).`, 'success');
         ProjectManager.addHistoryEntry('iccp', 'Auto-détection zones critiques', `${zones.length} zones`);
+        document.dispatchEvent(new CustomEvent('refreshGIS'));
+        document.dispatchEvent(new CustomEvent('refreshGIS3D'));
+    }
+
+    // ============================================================
+    // ANALYSE DES BESOINS DE RENFORCEMENT (NACE SP0169 / AMPP)
+    // ============================================================
+    function analyzeReinforcementNeeds() {
+        const state = ProjectManager.getState();
+        const zones = state.iccp.reinforcementZones || [];
+        
+        if (zones.length === 0) {
+            showToast('⚠️ Aucune zone critique définie. Ajoutez des zones avant d\'analyser.', 'warning');
+            return;
+        }
+
+        // Courant ICCP principal (protection de fond) — informatif, non bloquant
+        const iccpCurrent = Utils.safeNumber(state.iccp.current, 0);
+        if (iccpCurrent <= 0) {
+            showToast('ℹ️ ICCP principal non dimensionné : renseignez le courant ICCP pour une vue complète (l\'analyse des zones reste possible).', 'warning');
+        }
+
+        let totalAdditionalCurrent = 0;
+        let totalAnodesRequired = 0;
+        const analysisResults = [];
+
+        zones.forEach((zone, index) => {
+            // Calcul du nombre d'anodes pour cette zone spécifique
+            const additionalCurrent = Utils.safeNumber(zone.additionalCurrent, 0);
+            const anodesCount = zone.anodesCount || Math.max(1, Math.ceil(additionalCurrent / 0.3));
+            
+            totalAdditionalCurrent += additionalCurrent;
+            totalAnodesRequired += anodesCount;
+
+            analysisResults.push({
+                zoneId: zone.id,
+                zoneName: zone.name,
+                location: zone.location,
+                problemType: zone.problemType,
+                criticality: zone.criticality,
+                additionalCurrent: additionalCurrent,
+                anodesCount: anodesCount,
+                coordinates: zone.lat && zone.lon ? { lat: zone.lat, lon: zone.lon } : null,
+                analyzedAt: new Date().toISOString()
+            });
+        });
+
+        // Persister les résultats d'analyse
+        state.iccp.reinforcementAnalysis = {
+            totalAdditionalCurrent: totalAdditionalCurrent,
+            totalAnodesRequired: totalAnodesRequired,
+            zones: analysisResults,
+            analyzedAt: new Date().toISOString(),
+            iccpBaseCurrent: iccpCurrent
+        };
+
+        // Mettre à jour l'affichage
+        renderReinforcementResults();
+        try { ProjectManager.saveCurrentProject(); } catch (err) { console.error(err); }
+        
+        showToast(
+            `✅ Analyse terminée : ${totalAdditionalCurrent.toFixed(2)} A de renforcement ` +
+            `(${totalAnodesRequired} anodes) nécessaires dans ${zones.length} zone(s) critique(s).`,
+            'success'
+        );
+        
+        ProjectManager.addHistoryEntry(
+            'iccp', 
+            'Analyse besoins renforcement', 
+            `${totalAdditionalCurrent.toFixed(2)} A (${totalAnodesRequired} anodes) dans ${zones.length} zones`
+        );
+    }
+
+    // ============================================================
+    // AFFICHAGE DES RÉSULTATS D'ANALYSE DE RENFORCEMENT
+    // ============================================================
+    function renderReinforcementResults() {
+        const container = getDomElement('reinforcementResultsContent');
+        if (!container) return;
+
+        const state = ProjectManager.getState();
+        const analysis = state.iccp.reinforcementAnalysis;
+
+        if (!analysis || !Array.isArray(analysis.zones) || analysis.zones.length === 0) {
+            container.innerHTML = '<p class="info-message">Aucune zone analysée. Ajoutez des zones critiques puis cliquez sur « Analyser ».</p>';
+            return;
+        }
+
+        const iccpBase = Utils.safeNumber(analysis.iccpBaseCurrent, 0);
+        const totalAdd = Utils.safeNumber(analysis.totalAdditionalCurrent, 0);
+        const totalAnodes = Utils.safeNumber(analysis.totalAnodesRequired, 0);
+
+        let html =
+            '<div class="result-cards" style="margin-bottom:0.6rem;">' +
+            '<div class="result-card"><span class="result-label">Courant ICCP principal</span>' +
+            '<span class="result-value">' + iccpBase.toFixed(3) + '</span><span class="result-unit">A</span></div>' +
+            '<div class="result-card highlight"><span class="result-label">Courant de renforcement</span>' +
+            '<span class="result-value">' + totalAdd.toFixed(3) + '</span><span class="result-unit">A</span></div>' +
+            '<div class="result-card"><span class="result-label">Anodes sacrificielles</span>' +
+            '<span class="result-value">' + totalAnodes + '</span><span class="result-unit">anodes</span></div>' +
+            '<div class="result-card"><span class="result-label">Zones critiques</span>' +
+            '<span class="result-value">' + analysis.zones.length + '</span><span class="result-unit">zones</span></div>' +
+            '</div>' +
+            '<p class="info-message" style="margin-bottom:0.5rem;">' +
+            '<i class="fas fa-info-circle"></i> Protection mixte ICCP+SACP : ' +
+            '<strong>' + (iccpBase + totalAdd).toFixed(3) + ' A</strong> au total ' +
+            '(ICCP principal + renforcement local par anodes sacrificielles).</p>' +
+            '<table class="data-table" style="width:100%;font-size:0.82rem;">' +
+            '<thead><tr><th>Zone</th><th>Localisation</th><th>Problème</th>' +
+            '<th>Courant suppl. (A)</th><th>Anodes</th></tr></thead><tbody>';
+
+        const problemLabels = {
+            'high_resistivity': 'Haute résistivité',
+            'insufficient_current': 'Courant insuffisant',
+            'coating_damage': 'Endommagement revêtement',
+            'stray_current': 'Courant vagabond'
+        };
+
+        analysis.zones.forEach(zone => {
+            html += '<tr>' +
+                '<td><strong>' + Utils.escapeHtml(zone.zoneName) + '</strong></td>' +
+                '<td>' + Utils.escapeHtml(zone.location || '—') + '</td>' +
+                '<td>' + Utils.escapeHtml(problemLabels[zone.problemType] || zone.problemType || '—') + '</td>' +
+                '<td>' + Utils.safeNumber(zone.additionalCurrent, 0).toFixed(3) + '</td>' +
+                '<td>' + Utils.safeNumber(zone.anodesCount, 0) + '</td>' +
+                '</tr>';
+        });
+
+        html += '</tbody></table>' +
+            '<p style="margin-top:0.4rem;font-size:0.78rem;color:var(--text-muted);">' +
+            '<i class="fas fa-crosshairs"></i> Dimensionnement SACP localisé (DNV-RP-B401 / ISO 15589-1), ' +
+            'réparti sur les seules zones critiques.</p>';
+
+        container.innerHTML = html;
     }
 
     function exportPostsPDF() {
@@ -5659,7 +6151,7 @@ const UI = (function() {
             const raw = localStorage.getItem('cp_last_session');
             if (!raw) return;
             const session = JSON.parse(raw);
-            const { projectId, systemId, activeModule } = session || {};
+            const { projectId, systemId, activeModule, activeTabs } = session || {};
             if (!projectId) return;
 
             // Charger le projet si ce n'est pas déjà fait
@@ -5711,13 +6203,17 @@ const UI = (function() {
             populateProjectParams();
             refreshEquipmentListUI(true);
 
-            // Naviguer vers le module actif de la dernière session
+            // Revenir sur le module et les sous-onglets consultés avant F5.
             if (activeModule) {
-                const navItem = document.querySelector(`.nav-item[data-module="${CSS.escape(activeModule)}"]`);
-                if (navItem) {
-                    // On ne clique pas automatiquement pour ne pas perturber
-                    // mais on mémorise l'intention
-                }
+                switchModule(activeModule);
+            }
+            Object.entries(activeTabs || {}).forEach(([moduleId, tabTarget]) => {
+                const module = document.querySelector(`.module[data-module="${CSS.escape(moduleId)}"]`);
+                const tab = module?.querySelector(`[data-tab-target="${CSS.escape(tabTarget)}"]`);
+                if (tab && !tab.classList.contains('active')) tab.click();
+            });
+            if (typeof window.CPController?.updateDashboard === 'function') {
+                window.CPController.updateDashboard();
             }
 
             console.log('[AutoRestore] Session restaurée:', projectId, systemId);
@@ -5753,11 +6249,17 @@ const UI = (function() {
             const systemId = ProjectManager.getCurrentSystemId();
             const activeModuleEl = document.querySelector('.module.active');
             const activeModule = activeModuleEl ? activeModuleEl.id.replace('module-', '') : null;
+            const activeTabs = {};
+            document.querySelectorAll('.module[data-module]').forEach(module => {
+                const selectedTab = module.querySelector('[data-tabs] .ui-tab-button.active[data-tab-target]');
+                if (selectedTab) activeTabs[module.dataset.module] = selectedTab.dataset.tabTarget;
+            });
             if (projectId) {
                 localStorage.setItem('cp_last_session', JSON.stringify({
                     projectId,
                     systemId,
                     activeModule,
+                    activeTabs,
                     savedAt: Date.now()
                 }));
             }
@@ -5768,6 +6270,11 @@ const UI = (function() {
     // loadSystemParamsToModule
     // ============================================================
     function loadSystemParamsToModule(moduleId, systemId) {
+        // field-sync.js : instantané des champs appartenant à ce module
+        // avant écriture, pour ne répercerquer vers les autres modules
+        // que les valeurs réellement chargées (chargement = référence).
+        const _fsBefore = (window.FieldSync && typeof window.FieldSync.snapshotModuleFields === 'function')
+            ? window.FieldSync.snapshotModuleFields(moduleId) : null;
         const sys = ProjectManager.getSystem(systemId);
         if (!sys) { showToast('Système introuvable', 'error'); return; }
 
@@ -5825,8 +6332,10 @@ const UI = (function() {
                 ProjectManager.getState().anodes.actualLife = results.actualLife;
                 getDomElement('resTotalMass').innerText = results.totalMass.toFixed(1);
                 getDomElement('resAnodeCount').innerText = results.count;
-                getDomElement('anodePlaceholder').classList.add('hidden');
-                getDomElement('anodeResultsContent').classList.remove('hidden');
+                getDomElement('anodePlaceholder')?.classList.add('hidden');
+                getDomElement('anodeResultsContent')?.classList.remove('hidden');
+                getDomElement('anodeCalcPlaceholder')?.classList.add('hidden');
+                getDomElement('anodeCalcContent')?.classList.remove('hidden');
             }
             showToast(`Paramètres Anodes chargés depuis ${Utils.escapeHtml(sys.name)}`, 'success');
         }
@@ -5955,8 +6464,10 @@ const UI = (function() {
             if (results.R_total) {
                 ProjectManager.getState().groundbed.results = results;
                 displayGroundbedResults(results, params.totalDepth, params.activeDepth, params.anodeCount, params.anodeLength);
-                getDomElement('gbPlaceholder').classList.add('hidden');
-                getDomElement('gbResultsContent').classList.remove('hidden');
+                getDomElement('gbPlaceholder')?.classList.add('hidden');
+                getDomElement('gbResultsContent')?.classList.remove('hidden');
+                getDomElement('gbCalcPlaceholder')?.classList.add('hidden');
+                getDomElement('gbCalcContent')?.classList.remove('hidden');
                 const totalDepthVal = params.totalDepth || 0;
                 const activeDepthVal = params.activeDepth || 0;
                 const anodeCountVal = params.anodeCount || 0;
@@ -6001,18 +6512,67 @@ const UI = (function() {
             }
             showToast(`Paramètres Interférences chargés depuis ${Utils.escapeHtml(sys.name)}`, 'success');
         }
+        // field-sync.js : le module chargé fait référence pour les
+        // paramètres partagés qu'il possède — répercuter uniquement
+        // les champs dont la valeur a réellement changé.
+        if (window.FieldSync && typeof window.FieldSync.syncModuleFields === 'function') {
+            window.FieldSync.syncModuleFields(moduleId, _fsBefore);
+        }
         if (window.CPController && typeof window.CPController.updateDashboard === 'function') window.CPController.updateDashboard();
+    }
+
+    // ============================================================
+    // installMixteDefaults
+    // ============================================================
+    // Quand le type de système est 'mixte', on installe les
+    // équipements par défaut : les anodes sacrificielles et la
+    // STRENGTHENING (Critical Area Reinforcement) qui constitue
+    // l'infrastructure d'appoint du CP mixte.
+    async function installMixteDefaults(type) {
+        const sysType = String(type || 'mixte').toLowerCase();
+        if (sysType !== 'mixte') return;
+
+        const state = ProjectManager.getState();
+        const projectId = ProjectManager.getCurrentProjectId();
+        if (!projectId) return;
+
+        const equipments = state.equipments || [];
+        const hasAnode = equipments.some(eq => eq.type === 'anode' && eq.projectId === projectId);
+        const hasReinforcement = equipments.some(eq => eq.type === 'groundbed' && eq.projectId === projectId);
+
+        if (hasAnode && hasReinforcement) return;
+
+        let created = 0;
+
+        if (!hasAnode) {
+            await addEquipment('ANODE-MIXTE-01', 'anode', 0, projectId, {}, true, null, null);
+            created++;
+        }
+
+        if (!hasReinforcement) {
+            await addEquipment('GB-INTEGRAL-01', 'groundbed', 0, projectId, {}, true, null, null);
+            created++;
+        }
+
+        if (created > 0) {
+            showToast(`[Mixte] ${created} équipement(s) intégré(s) au projet.`, 'success');
+        }
     }
 
     // ============================================================
     // setModulesActivation
     // ============================================================
-    function setModulesActivation(type) {
+    async function setModulesActivation(type) {
         const cpCalcModule = getDomElement('module-cp-calc');
         const anodesModule = getDomElement('module-anodes');
         const iccpModule = getDomElement('module-iccp');
-        const disabledModules = type === 'iccp' ? ['module-anodes']
-            : type === 'anodes' ? ['module-iccp'] : [];
+        // Module « Dimensionnement Anodes Sacrificielles » : actif UNIQUEMENT
+        // pour le type CP « anodes ». Désactivé pour « mixte » et « iccp ».
+        // (Le mode mixte reste pleinement fonctionnel : l'« Optimisation Mixte »
+        //  est déclenchée depuis module-iccp, qui n'est jamais désactivé ici, et
+        //  pilote AnodesOptimizationEngine.runForProject() par programme.)
+        // type 'anodes' → désactiver ICCP ; type 'mixte' / 'iccp' → désactiver Anodes.
+        const disabledModules = type === 'anodes' ? ['module-iccp'] : ['module-anodes'];
 
         [cpCalcModule, anodesModule, iccpModule].forEach(module => {
             if (!module) return;
@@ -6029,13 +6589,19 @@ const UI = (function() {
                 navItem.setAttribute('aria-disabled', String(isDisabled));
             }
         });
+
+        // Quand type = 'mixte', installer les équipements par défaut (anodes + groundbed intégré)
+        if (type === 'mixte') {
+            try { await installMixteDefaults(type); } catch (e) { console.warn('[UI] installMixteDefaults error:', e); }
+        }
     }
 
     // ============================================================
     // initTheme / setupNavigation / switchModule / setupSidebar / updateDate
     // ============================================================
     function refreshDashboardChartTheme() {
-        const isLight = document.body.classList.contains('light-mode');
+        // Le thème 'data-mode' (Data-Driven) a un fond clair : mêmes couleurs de graphiques que le mode clair
+        const isLight = document.body.classList.contains('light-mode') || document.body.classList.contains('data-mode');
         const textColor = isLight ? '#536276' : '#a9b7c9';
         const tickColor = isLight ? '#61728a' : '#8ea0b7';
         const gridColor = isLight ? 'rgba(49, 70, 97, 0.12)' : 'rgba(142, 160, 183, 0.12)';
@@ -6069,15 +6635,82 @@ const UI = (function() {
             });
     }
 
+    // ============================================================
+    // SÉLECTEUR DE STYLE — 3 styles d'interface
+    //   'dark'  : mode premium sombre (défaut)
+    //   'light' : mode clair (class light-mode)
+    //   'data'  : Data-Driven — Corporate/Enterprise, Flat Design (class data-mode)
+    // Persistance : localStorage 'cp_theme'
+    // ============================================================
     function initTheme() {
+        const THEME_IDS = ['dark', 'light', 'data', 'enterprise', 'pulse'];
         const saved = localStorage.getItem('cp_theme');
+        const current = THEME_IDS.includes(saved) ? saved : 'dark';
         const btn = getDomElement('themeToggle');
-        if (saved === 'light') document.body.classList.add('light-mode');
-        refreshDashboardChartTheme();
-        btn?.addEventListener('click', () => {
-            document.body.classList.toggle('light-mode');
-            localStorage.setItem('cp_theme', document.body.classList.contains('light-mode') ? 'light' : 'dark');
+        const menu = getDomElement('stylePickerMenu');
+
+        function applyTheme(theme) {
+            document.body.classList.remove('light-mode', 'data-mode', 'enterprise-mode', 'pulse-mode');
+            if (theme === 'light')      document.body.classList.add('light-mode');
+            if (theme === 'data')       document.body.classList.add('data-mode');
+            if (theme === 'enterprise') document.body.classList.add('enterprise-mode');
+            if (theme === 'pulse')      document.body.classList.add('pulse-mode');
+            try {
+                localStorage.setItem('cp_theme', theme);
+            } catch (err) {
+                // storage indisponible (navigation privée stricte) : le thème reste actif pour la session
+            }
+            const icon = btn ? btn.querySelector('i') : null;
+            if (icon) {
+                icon.className = theme === 'light' ? 'fas fa-sun'
+                    : theme === 'data' ? 'fas fa-chart-column'
+                    : theme === 'enterprise' ? 'fas fa-building'
+                    : theme === 'pulse' ? 'fas fa-wave-square'
+                    : 'fas fa-moon';
+                btn.setAttribute('aria-label', theme === 'light' ? "Basculer le style — actuellement : Clair"
+                    : theme === 'data' ? "Basculer le style — actuellement : Data-Driven (Corporate / Flat)"
+                    : theme === 'enterprise' ? "Basculer le style — actuellement : Enterprise (Bleu marine / PTW)"
+                    : theme === 'pulse' ? "Basculer le style — actuellement : Pulse (Soft UI / Blanc)"
+                    : "Basculer le style — actuellement : Sombre");
+            }
+            if (menu) {
+                menu.querySelectorAll('.style-option').forEach(option => {
+                    const active = option.dataset.theme === theme;
+                    option.classList.toggle('active', active);
+                    option.setAttribute('aria-checked', String(active));
+                });
+            }
             refreshDashboardChartTheme();
+        }
+
+        function closeMenu() {
+            if (!menu) return;
+            menu.classList.remove('open');
+            if (btn) btn.setAttribute('aria-expanded', 'false');
+        }
+
+        applyTheme(current);
+
+        if (!btn || !menu) return;
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const willOpen = !menu.classList.contains('open');
+            menu.classList.toggle('open', willOpen);
+            btn.setAttribute('aria-expanded', String(willOpen));
+        });
+        menu.querySelectorAll('.style-option').forEach(option => {
+            option.addEventListener('click', () => {
+                applyTheme(option.dataset.theme);
+                closeMenu();
+                btn.focus();
+            });
+        });
+        // Fermer le menu : clic extérieur ou Échap
+        document.addEventListener('click', (event) => {
+            if (!menu.contains(event.target) && !btn.contains(event.target)) closeMenu();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') closeMenu();
         });
     }
 
@@ -6113,6 +6746,7 @@ const UI = (function() {
                         panel.classList.toggle('active', active);
                         panel.hidden = !active;
                     });
+                    saveSessionSnapshot();
                 });
                 button.addEventListener('keydown', event => {
                     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -6132,16 +6766,58 @@ const UI = (function() {
         });
     }
 
+    function normalizeModuleId(moduleId) {
+        const raw = String(moduleId || '').trim().replace(/^#/, '').toLowerCase();
+        if (!raw) return '';
+
+        const aliases = {
+            'dashboard': 'dashboard',
+            'overview': 'dashboard',
+            'vue-densemble': 'dashboard',
+            'equipement': 'equipements',
+            'equipements': 'equipements',
+            'equipment': 'equipements',
+            'systeme-iccp': 'iccp',
+            'iccp': 'iccp',
+            'iccp-postes': 'iccp',
+            'postes': 'iccp',
+            'corrosivite': 'corrosivite',
+            'etude-corrosivite': 'corrosivite',
+            'cartographie': 'cartography',
+            'cartography': 'cartography',
+            'sig': 'cartography',
+            'visualisation3d': 'visualisation3d',
+            'visualisation-3d': 'visualisation3d',
+            '3d': 'visualisation3d'
+        };
+
+        return aliases[raw] || raw;
+    }
+
     function switchModule(moduleId) {
+        const resolvedModuleId = normalizeModuleId(moduleId);
+        if (!resolvedModuleId) return;
+
         document.querySelectorAll('.nav-item').forEach(n => {
-            const active = n.dataset.module === moduleId;
+            const active = n.dataset.module === resolvedModuleId;
             n.classList.toggle('active', active);
             n.querySelector('a')?.setAttribute('aria-current', active ? 'page' : 'false');
         });
-        document.querySelectorAll('.module').forEach(m => m.classList.remove('active'));
-        getDomElement(`module-${moduleId}`)?.classList.add('active');
+        document.querySelectorAll('.module').forEach(m => {
+            const active = m.dataset.module === resolvedModuleId;
+            m.classList.toggle('active', active);
+        });
+        getDomElement(`module-${resolvedModuleId}`)?.classList.add('active');
+        saveSessionSnapshot();
 
-        if (moduleId === 'visualisation3d') {
+        if (window.location.pathname.endsWith('/studio') || window.location.pathname.endsWith('/workspace') || window.location.pathname.endsWith('/app')) {
+            const nextHash = resolvedModuleId ? `#${resolvedModuleId}` : '';
+            if (window.location.hash !== nextHash) {
+                history.replaceState(null, '', `${window.location.pathname}${nextHash}`);
+            }
+        }
+
+        if (resolvedModuleId === 'visualisation3d') {
             populateVis3dSystemSelector();
 
             if (window.Gis3D) {
@@ -6200,6 +6876,12 @@ const UI = (function() {
             }, 300);
         }
         if (window.innerWidth <= 768) getDomElement('sidebar')?.classList.remove('open');
+
+        // Notifie tous les listeners (app-3d-events.js, etc.) que le module a changé
+        // → déclenchement du plein écran automatique pour Cartographie et Visualisation 3D
+        document.dispatchEvent(new CustomEvent('moduleChanged', {
+            detail: { moduleId: resolvedModuleId }
+        }));
     }
 
     function setupSidebar() {
@@ -6286,8 +6968,17 @@ const UI = (function() {
     }
 
     function setupForms() {
+        setupCalculationInputPersistence();
         getDomElement('cpCalcForm')?.addEventListener('submit', async (e) => { e.preventDefault(); if (window.CPController && typeof window.CPController.calculateCP === 'function') await window.CPController.calculateCP(); await ProjectManager.saveCurrentProject(); });
         getDomElement('anodeForm')?.addEventListener('submit', async (e) => { e.preventDefault(); if (window.CPController && typeof window.CPController.calculateAnodes === 'function') await window.CPController.calculateAnodes(); await ProjectManager.saveCurrentProject(); });
+        getDomElement('anodeForm')?.addEventListener('reset', () => {
+            getDomElement('anodePlaceholder')?.classList.remove('hidden');
+            getDomElement('anodeResultsContent')?.classList.add('hidden');
+            getDomElement('anodeCalcPlaceholder')?.classList.remove('hidden');
+            getDomElement('anodeCalcContent')?.classList.add('hidden');
+            const tbody = getDomElement('anodeTableBody');
+            if (tbody) tbody.innerHTML = '';
+        });
         getDomElement('iccpForm')?.addEventListener('submit', async (e) => { e.preventDefault(); if (window.CPController && typeof window.CPController.calculateICCP === 'function') await window.CPController.calculateICCP(); await ProjectManager.saveCurrentProject(); });
         getDomElement('exportGlobalBtn')?.addEventListener('click', () => { if (window.CPController && typeof window.CPController.exportGlobalReport === 'function') window.CPController.exportGlobalReport(); });
         getDomElement('cpEnvironment')?.addEventListener('change', () => {
@@ -6298,16 +6989,31 @@ const UI = (function() {
 
     function setupGroundbedForm() {
         const form = getDomElement('groundbedForm');
-        if (form) { form.addEventListener('submit', (e) => { e.preventDefault(); const editId = getDomElement('gbEditId').value; if (window.CPController && typeof window.CPController.calculateGroundbed === 'function') window.CPController.calculateGroundbed(editId || null); }); }
+        // ⚠️ CORRECTION (doublon de puits anodique) :
+        // ce listener existait déjà dans app.js (l.2250). Les deux
+        // appellements déclenchaient 2× CPController.calculateGroundbed()
+        // → 2 groundbeds créés par clic. On garde UNE seule source de vérité
+        // et on marque le formulaire comme lié pour rester idempotent.
+        if (form && !form.dataset.gbSubmitBound) {
+            form.dataset.gbSubmitBound = '1';
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const editId = getDomElement('gbEditId').value;
+                if (window.CPController && typeof window.CPController.calculateGroundbed === 'function') window.CPController.calculateGroundbed(editId || null);
+            });
+        }
         document.querySelectorAll('#groundbedForm .std-select').forEach(select => {
             const manualId = select.id + 'Manual';
             const manual = getDomElement(manualId);
             if (manual) { select.addEventListener('change', () => { manual.style.display = select.value === 'manual' ? 'block' : 'none'; }); }
         });
         const exportBtn = getDomElement('gbExportPDF');
-        if (exportBtn) exportBtn.addEventListener('click', () => {
-            if (window.CPController && typeof window.CPController.exportGroundbedPDF === 'function') window.CPController.exportGroundbedPDF();
-        });
+        if (exportBtn && !exportBtn.dataset.gbExportBound) {
+            exportBtn.dataset.gbExportBound = '1';
+            exportBtn.addEventListener('click', () => {
+                if (window.CPController && typeof window.CPController.exportGroundbedPDF === 'function') window.CPController.exportGroundbedPDF();
+            });
+        }
     }
 
     function setupInterferenceForm() {
@@ -6349,6 +7055,16 @@ const UI = (function() {
         const resultsContent = getDomElement('gbResultsContent');
         if (placeholder) placeholder.classList.add('hidden');
         if (resultsContent) resultsContent.classList.remove('hidden');
+
+        const calcPlaceholder = getDomElement('gbCalcPlaceholder');
+        const calcContent = getDomElement('gbCalcContent');
+        if (calcPlaceholder) calcPlaceholder.classList.add('hidden');
+        if (calcContent) calcContent.classList.remove('hidden');
+
+        const resultsCard = getDomElement('gbResultsCard');
+        if (resultsCard) resultsCard.style.display = 'block';
+        const calcCard = getDomElement('gbCalcCard');
+        if (calcCard) calcCard.style.display = 'block';
 
         const setValue = (id, value, suffix = '') => {
             const el = getDomElement(id);
@@ -6410,7 +7126,7 @@ const UI = (function() {
         }
 
         const spacing = activeDepth / (anodeCount + 1);
-        drawGroundbedVisual(totalDepth || 200, activeDepth || 150, anodeCount || 16, anodeLength || 1.5, spacing);
+        drawGroundbedVisual(totalDepth || 200, activeDepth || 150, anodeCount || 16, anodeLength || 1.5, spacing, result);
 
         if (result._warning) {
             const alertDiv = getDomElement('iccpAlertsContainer') || document.createElement('div');
@@ -6439,8 +7155,12 @@ const UI = (function() {
         if (!result) return;
         const placeholder = getDomElement('anodePlaceholder');
         const resultsContent = getDomElement('anodeResultsContent');
+        const calcPlaceholder = getDomElement('anodeCalcPlaceholder');
+        const calcContent = getDomElement('anodeCalcContent');
         if (placeholder) placeholder.classList.add('hidden');
         if (resultsContent) resultsContent.classList.remove('hidden');
+        if (calcPlaceholder) calcPlaceholder.classList.add('hidden');
+        if (calcContent) calcContent.classList.remove('hidden');
 
         const setValue = (id, value, suffix = '') => {
             const el = getDomElement(id);
@@ -6486,6 +7206,12 @@ const UI = (function() {
                 <tr><td>Orientation</td><td>${result.orientation}</td><td>Verticale ou horizontale</td></tr>
             `;
         }
+
+        const paramTab = document.querySelector('[data-tab-target="anode-param-panel"]');
+        if (paramTab && paramTab.classList.contains('active')) {
+            const resultsTab = document.querySelector('[data-tab-target="anode-results-panel"]');
+            if (resultsTab) resultsTab.click();
+        }
     }
 
     // ============================================================
@@ -6497,6 +7223,7 @@ const UI = (function() {
         const resultsContent = getDomElement('ifResultsContent');
         if (placeholder) placeholder.classList.add('hidden');
         if (resultsContent) resultsContent.classList.remove('hidden');
+        resultsContent.querySelectorAll('.model-classification-banner').forEach(banner => banner.remove());
         // BUG-CP-006 : affichage de la classification du modèle
         if (result.modelClassification) {
             const classifHtml = `
@@ -6670,7 +7397,22 @@ const UI = (function() {
     async function init() {
         await StorageManager.initDatabase();
         await StorageManager.initEncryption();
+        if (typeof StorageManager.pullProjectsFromBackend === 'function'
+            && typeof StorageManager.isAuthenticated === 'function'
+            && StorageManager.isAuthenticated()) {
+            await StorageManager.pullProjectsFromBackend({ silent: true });
+            // Synchronisation auto : pousse les projets locaux manquants/modifiés
+            // vers le serveur pour que le Dashboard les voie aussi.
+            if (typeof StorageManager.pushProjectsToBackend === 'function') {
+                await StorageManager.pushProjectsToBackend({ silent: true });
+            }
+        }
         await ProjectManager.loadProjectsList();
+        const requestedProjectId = new URLSearchParams(window.location.search).get('projectId');
+        if (requestedProjectId && ProjectManager.getProjectsList().some(project => project.id === requestedProjectId)) {
+            localStorage.setItem('lastProjectId', requestedProjectId);
+            await ProjectManager.loadProject(requestedProjectId);
+        }
 
         let attempts = 0;
         while (!window.CPController && attempts < 30) {
@@ -6730,11 +7472,17 @@ const UI = (function() {
                     ProjectManager.setCurrentSystemId(val);
                     const activeModule = document.querySelector('.module.active');
                     if (activeModule) {
+                    const activeTabs = {};
+                    document.querySelectorAll('.module[data-module]').forEach(module => {
+                        const selectedTab = module.querySelector('[data-tabs] .ui-tab-button.active[data-tab-target]');
+                        if (selectedTab) activeTabs[module.dataset.module] = selectedTab.dataset.tabTarget;
+                    });
                         const moduleId = activeModule.id.replace('module-', '');
                         loadSystemParamsToModule(moduleId, val);
                     }
                     if (window.CPController && typeof window.CPController.updateDashboard === 'function') window.CPController.updateDashboard();
                     renderSystems();
+                            activeTabs,
                     populateAllSystemSelectors();
                 }
             });
@@ -7038,7 +7786,60 @@ const UI = (function() {
         if (anodeCurrentField) anodeCurrentField.addEventListener('change', () => { if (window.CPController && typeof window.CPController.checkConsistency === 'function') window.CPController.checkConsistency(); });
 
         const modal = getDomElement('projectModal');
-        getDomElement('newProjectBtn').onclick = () => { modal.style.display = 'flex'; };
+        const modalTitle = getDomElement('projectModalTitle');
+        const confirmProjectBtn = getDomElement('confirmCreateProject');
+        // Mode du modal projet : 'create' (défaut) ou 'edit'.
+        let _projectModalMode = 'create';
+
+        // Configure le modal « Nouveau / Modifier projet » (titre + libellé
+        // du bouton de confirmation). Réutilise le même formulaire.
+        function setProjectModalMode(mode) {
+            _projectModalMode = mode;
+            const isEdit = (mode === 'edit');
+            if (modalTitle) {
+                modalTitle.innerHTML = isEdit
+                    ? '<i class="fas fa-pen-to-square" aria-hidden="true"></i> Modifier le projet'
+                    : '<i class="fas fa-folder-plus" aria-hidden="true"></i> Nouveau projet';
+            }
+            if (confirmProjectBtn) confirmProjectBtn.textContent = isEdit ? 'Enregistrer' : 'Créer';
+        }
+
+        // Ouvre le modal en mode CRÉATION (champs réinitialisés).
+        getDomElement('newProjectBtn').onclick = () => {
+            setProjectModalMode('create');
+            const idField = getDomElement('newProjectId');
+            const nameField = getDomElement('newProjectName');
+            if (idField) { idField.value = ''; idField.disabled = false; }
+            if (nameField) nameField.value = 'Nouveau projet';
+            // Type par défaut : Mixte (comme à la création).
+            const mixteRadio = document.querySelector('input[name="projType"][value="mixte"]');
+            if (mixteRadio) mixteRadio.checked = true;
+            modal.style.display = 'flex';
+        };
+
+        // Ouvre le modal en mode MODIFICATION (pré-rempli avec le projet actif).
+        const editProjectBtn = getDomElement('editProjectBtn');
+        if (editProjectBtn) {
+            editProjectBtn.onclick = () => {
+                const currentId = ProjectManager.getCurrentProjectId();
+                if (!currentId || currentId === '__all__') {
+                    showToast('⚠️ Sélectionnez un projet unique à modifier.', 'warning');
+                    return;
+                }
+                const proj = ProjectManager.getState().project || {};
+                setProjectModalMode('edit');
+                const idField = getDomElement('newProjectId');
+                const nameField = getDomElement('newProjectName');
+                if (idField) { idField.value = currentId; idField.disabled = false; }
+                if (nameField) nameField.value = proj.name || '';
+                const type = proj.cpSystemType || 'mixte';
+                const typeRadio = document.querySelector(`input[name="projType"][value="${type}"]`)
+                    || document.querySelector('input[name="projType"][value="mixte"]');
+                if (typeRadio) typeRadio.checked = true;
+                modal.style.display = 'flex';
+            };
+        }
+
         getDomElement('cancelModal').onclick = () => { modal.style.display = 'none'; };
         getDomElement('confirmCreateProject').onclick = async () => {
             const projId = getDomElement('newProjectId').value.trim();
@@ -7046,6 +7847,34 @@ const UI = (function() {
             const type = document.querySelector('input[name="projType"]:checked').value;
             if (!projId) { showToast('ID projet requis', 'warning'); return; }
             if (!name) { showToast('Nom requis', 'warning'); return; }
+
+            // ── Mode MODIFICATION ──────────────────────────────────
+            if (_projectModalMode === 'edit') {
+                try {
+                    const res = await ProjectManager.updateCurrentProject(projId, name, type);
+                    await ProjectManager.loadProjectsList();
+                    populateProjectSelector();
+                    loadProjectParams();
+                    // Réappliquer l'activation des modules selon le nouveau type.
+                    setModulesActivation(type);
+                    if (window.CPController && typeof window.CPController.updateDashboard === 'function') {
+                        window.CPController.updateDashboard();
+                    }
+                    if (typeof window.UI !== 'undefined' && typeof window.UI.renderSystems === 'function') {
+                        window.UI.renderSystems();
+                    }
+                    modal.style.display = 'none';
+                    const idNote = res && res.idChanged ? ` (ID: ${Utils.escapeHtml(projId)})` : '';
+                    showToast(`Projet "${Utils.escapeHtml(name)}"${idNote} mis à jour`, 'success');
+                    document.dispatchEvent(new CustomEvent('refreshGIS'));
+                    document.dispatchEvent(new CustomEvent('refreshGIS3D'));
+                } catch (err) {
+                    showToast(err.message || 'Erreur mise à jour projet', 'error');
+                }
+                return;
+            }
+
+            // ── Mode CRÉATION (comportement d'origine, inchangé) ───
             try {
                 await ProjectManager.createNewProject(projId, name, type);
                 await ProjectManager.loadProjectsList();
@@ -7063,28 +7892,51 @@ const UI = (function() {
                 showToast(err.message || 'Erreur création projet', 'error');
             }
         };
-        getDomElement('deleteProjectBtn').onclick = async () => {
-            try {
-                await ProjectManager.deleteCurrentProject();
-                await ProjectManager.loadProjectsList();
-                populateProjectSelector();
-                if (ProjectManager.getProjectsList().length > 0) { await ProjectManager.loadProject(ProjectManager.getProjectsList()[0].id); }
-                showToast('Projet supprimé', 'warning');
-            } catch (err) { showToast('Erreur lors de la suppression du projet', 'error'); console.error(err); }
-        };
 
-        const saveBtn = getDomElement('saveNowBtn');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', function() {
-                updateSaveStatus('saving');
-                ProjectManager.saveCurrentProject()
-                    .then(() => updateSaveStatus('saved'))
-                    .catch(() => updateSaveStatus('error'));
-            });
+        const deleteProjBtn = getDomElement('deleteProjectBtn');
+        if (deleteProjBtn) {
+            deleteProjBtn.onclick = async () => {
+                const currentProjId = ProjectManager.getCurrentProjectId();
+                if (!currentProjId) {
+                    showToast('⚠️ Aucun projet actif à supprimer.', 'warning');
+                    return;
+                }
+                const projects = ProjectManager.getProjectsList() || [];
+                if (projects.length <= 1) {
+                    showToast('⚠️ Impossible de supprimer le dernier projet restant.', 'warning');
+                    return;
+                }
+                const currentProj = projects.find(p => p.id === currentProjId) || { name: currentProjId };
+                const confirmMsg = `Êtes-vous sûr de vouloir supprimer définitivement le projet "${currentProj.name || currentProjId}" (${currentProjId}) ainsi que tous ses équipements, zones critiques et calculs associés ?`;
+                
+                if (!window.confirm(confirmMsg)) {
+                    return;
+                }
+
+                try {
+                    if (window.CPController && typeof window.CPController.deleteCurrentProject === 'function') {
+                        await window.CPController.deleteCurrentProject();
+                    } else if (typeof ProjectManager.deleteCurrentProject === 'function') {
+                        await ProjectManager.deleteCurrentProject();
+                    }
+                    
+                    await ProjectManager.loadProjectsList();
+                    const remainingProjects = ProjectManager.getProjectsList() || [];
+                    if (remainingProjects.length > 0) {
+                        await ProjectManager.loadProject(remainingProjects[0].id);
+                    }
+                    populateProjectSelector();
+                    loadProjectParams();
+                    renderEquipmentsTable();
+                    showToast(`✅ Projet "${currentProjId}" supprimé avec succès.`, 'success');
+                    document.dispatchEvent(new CustomEvent('refreshGIS'));
+                    document.dispatchEvent(new CustomEvent('refreshGIS3D'));
+                } catch (err) {
+                    console.error('Erreur suppression projet:', err);
+                    showToast(err.message || 'Erreur lors de la suppression du projet', 'error');
+                }
+            };
         }
-        document.addEventListener('keydown', function(e) {
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); const btn = getDomElement('saveNowBtn'); if (btn) btn.click(); }
-        });
 
         setInterval(() => {
             updateSaveStatus('saving');
@@ -8005,6 +8857,8 @@ const UI = (function() {
         generateWaterFromEnvironment,
 
         autoDetectZones,
+        analyzeReinforcementNeeds,
+        renderReinforcementResults,
 
         exportPostsPDF,
         exportPostsCSV,
@@ -8185,6 +9039,9 @@ const UI = (function() {
         // v9.3 : méthodes Test Posts exposées
         // ============================================================
         refreshPipelinesAndLength: refreshPipelinesAndLength,
+
+        // Expose the module switcher used by deep links such as /studio#iccp or /studio#equipements
+        switchModule: switchModule,
 
         RHO_CU: RHO_CU
     };

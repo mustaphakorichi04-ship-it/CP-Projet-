@@ -797,10 +797,7 @@
       <div class="workspace-switcher">
         <label class="workspace-label">Espace de travail actif</label>
         <select class="workspace-select" id="workspaceSelect" onchange="switchWorkspace(this.value)">
-          <option value="Projet EMK">Projet EMK &bull; ICCP Actif</option>
-          <option value="gazoducs">Gazoducs Europe &bull; Prod</option>
-          <option value="offshore">Lignes Offshore TotalEnergies</option>
-          <option value="sandbox_lab">+ Créer nouvel espace...</option>
+          <option value="">Chargement des projets…</option>
         </select>
       </div>
 
@@ -953,7 +950,7 @@
           <!-- Welcome Hero -->
           <div class="welcome-hero">
             <div class="welcome-text">
-              <h2>Supervision Opérationnelle &bull; <span id="heroProjectTitle">Projet EMK</span></h2>
+              <h2>Supervision Opérationnelle &bull; <span id="heroProjectTitle">Projet actif</span></h2>
               <p>
                 Plateforme de protection cathodique certifiée <strong>NACE SP0169</strong> et <strong>ISO 15589-1</strong>.
                 Connectée en temps réel au moteur d'ingénierie et à la base de données industrielle.
@@ -979,7 +976,7 @@
               </div>
               <div class="kpi-value" id="kpiNetworkKm">12.78 <small style="font-size: 1rem; color: var(--saas-muted);">km</small></div>
               <div class="kpi-trend trend-up">
-                <span>✓</span> <span id="kpiNetworkDetail">EMK-42 (8.78 km) + EMN-11 (4.00 km)</span>
+                <span>✓</span> <span id="kpiNetworkDetail">Données du projet sélectionné</span>
               </div>
             </div>
 
@@ -1016,7 +1013,7 @@
             <!-- Real Projects / Pipelines Table -->
             <div class="card-block">
               <div class="card-block-header">
-                <span class="card-block-title">Ouvrages & Canalisations du Projet Actif (Projet EMK)</span>
+                <span class="card-block-title" id="ouvragesTitle">Ouvrages & Canalisations du Projet Actif</span>
                 <a href="/studio" class="btn-action-icon primary">Ouvrir dans le Studio &rarr;</a>
               </div>
               <div style="overflow-x: auto;">
@@ -1097,7 +1094,7 @@
               </div>
               <div class="card-block-body">
                 <p style="font-size: 0.82rem; color: var(--saas-muted); margin-bottom: 1rem;">
-                  Pré-rempli avec les dimensions réelles cumulées de <strong>Projet EMK</strong>.
+                  Pré-rempli avec les dimensions réelles cumulées de <strong id="estimatorProjectLabel">projet sélectionné</strong>.
                 </p>
                 <div class="calc-input-group">
                   <label class="calc-input-label">Longueur totale des tronçons (km)</label>
@@ -1801,13 +1798,111 @@
       showToast('Toutes les notifications sont marquées comme lues.', 'info');
     }
 
+    // ── En-têtes d'authentification (compatibilité des deux modes) ──
+    // Mode legacy (CP_USE_HTTPONLY_COOKIE=false, défaut en dev) :
+    //   le JWT est stocké dans localStorage['cp_token'] par login.html et
+    //   DOIT être renvoyé via le header `Authorization: Bearer`. Sans cela,
+    //   /api/dashboard/summary répond 401 → redirection /login → boucle
+    //   infinie login↔dashboard.
+    // Mode HttpOnly (CP_USE_HTTPONLY_COOKIE=true) :
+    //   login.html supprime cp_token (token JSON = null) ; aucun header n'est
+    //   ajouté ici et le cookie cp_access_token (SameSite=Strict) est transmis
+    //   automatiquement grâce à `credentials:'same-origin'`.
+    function cpAuthHeaders() {
+      const headers = {};
+      try {
+        const token = localStorage.getItem('cp_token') || localStorage.getItem('cp_auth_token');
+        if (token && token !== 'cookie') headers['Authorization'] = `Bearer ${token}`;
+      } catch (e) { /* localStorage indisponible (mode privé) : on tente sans header */ }
+      return headers;
+    }
+
+    // ── Normalisation des espaces de travail ──
+    // /api/dashboard/summary renvoie `projects` = tableau de résumés projet
+    // (id, name, type, standard, pipelineLengthKm, pipelineSurfaceM2,
+    //  rectifiersCount, groundbedsCount, iccpCurrentA, status, updatedAt).
+    // getWorkspaceProjectEntries() normalise ces résumés en entrées internes
+    // (state.data.projects) en conservant les champs consommés en aval et en
+    // écartant les entrées sans identifiant exploitable.
+    function getWorkspaceProjectEntries(projects) {
+      if (!Array.isArray(projects)) return [];
+      return projects
+        .filter(p => p && p.id !== undefined && p.id !== null && String(p.id) !== '')
+        .map(p => ({
+          id: String(p.id),
+          name: p.name || String(p.id),
+          type: p.type || 'CP',
+          standard: p.standard || 'NACE SP0169',
+          pipelineLengthKm: Number(p.pipelineLengthKm) || 0,
+          pipelineSurfaceM2: Number(p.pipelineSurfaceM2) || 0,
+          rectifiersCount: Number(p.rectifiersCount) || 0,
+          groundbedsCount: Number(p.groundbedsCount) || 0,
+          iccpCurrentA: Number(p.iccpCurrentA) || 0,
+          status: p.status || 'Protégé (-850 mV CSE)',
+          updatedAt: p.updatedAt || null
+        }));
+    }
+
+    // Construit la liste des options sélectionnables pour le sélecteur d'espace
+    // de travail à partir des entrées normalisées (state.data.projects).
+    function buildWorkspaceOptions(entries) {
+      if (!Array.isArray(entries)) return [];
+      return entries.filter(p => p && p.id);
+    }
+
+    // (Re)peuple le <select id="workspaceSelect"> avec les espaces de travail
+    // réels + l'option de création, afin que switchWorkspace() reste fonctionnel.
+    // Libellé lisible du type de système de protection cathodique.
+    function cpTypeLabel(type) {
+      const t = String(type || '').toLowerCase();
+      if (t === 'iccp') return 'ICCP';
+      if (t === 'anodes') return 'Anodes';
+      if (t === 'mixte') return 'Mixte';
+      return t ? (t.charAt(0).toUpperCase() + t.slice(1)) : 'CP';
+    }
+
+    function populateWorkspaceSelect(options) {
+      const select = document.getElementById('workspaceSelect');
+      if (!select) return;
+      const list = Array.isArray(options) ? options : [];
+      select.innerHTML = '';
+      if (list.length === 0) {
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = 'Aucun projet — créez-en un dans le Studio';
+        select.appendChild(empty);
+      }
+      // Libellé demandé : « PROJ-001-EMK (Mixte) ».
+      list.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${p.id}-${p.name} (${cpTypeLabel(p.type)})`;
+        select.appendChild(opt);
+      });
+      const create = document.createElement('option');
+      create.value = 'sandbox_lab';
+      create.textContent = '+ Créer nouvel espace...';
+      select.appendChild(create);
+    }
+
     // Real-Time Data Fetcher
     async function loadRealData() {
       try {
-        const res = await fetch('/api/dashboard/summary');
-        if (res.ok) {
-          const d = await res.json();
-          state.data = d;
+        const res = await fetch('/api/dashboard/summary', {
+          credentials: 'same-origin',
+          headers: cpAuthHeaders()
+        });
+        if (res.status === 401) {
+          localStorage.removeItem('cp_token');
+          localStorage.removeItem('cp_auth_token');
+          localStorage.removeItem('cp_user');
+          window.location.href = '/login';
+          return false;
+        }
+        if (!res.ok) throw new Error(`Échec du chargement des projets (${res.status}).`);
+        const d = await res.json();
+        state.data = { ...d, projects: getWorkspaceProjectEntries(d.projects) };
+        {
 
           // Engineer
           if (d.engineer) {
@@ -1818,85 +1913,50 @@
             document.getElementById('inputCardName').value = d.engineer.name;
           }
 
-          // Real KPIs
+          // Real KPIs — partie GLOBALE uniquement (quota SaaS + compteur de projets).
+          // Les KPI spécifiques au projet (réseau protégé, NACE, postes de
+          // soutirage, courant débité) sont calculés dans renderProjectView()
+          // afin de suivre la sélection de l'espace de travail actif.
           if (d.kpis) {
-            document.getElementById('kpiNetworkKm').innerHTML = `${d.kpis.protectedNetworkKm} <small style="font-size: 1rem; color: var(--saas-muted);">km</small>`;
-            document.getElementById('kpiNacePercent').innerText = d.kpis.naceComplianceFormatted;
-            document.getElementById('kpiRectifiersCount').innerHTML = `${d.kpis.activeRectifiersCount} <small style="font-size: 1rem; color: var(--saas-muted);">actif</small>`;
-            document.getElementById('kpiCurrentDemand').innerText = `Courant débité : ${d.kpis.totalIccpCurrentA} A (TR-OPTIMAL)`;
             document.getElementById('kpiQuotaUsage').innerHTML = `${d.kpis.activeProjectsCount} / 10 <small style="font-size: 0.9rem; color: var(--saas-muted);">projets</small>`;
             document.getElementById('badgeProjectCount').innerText = d.kpis.activeProjectsCount;
-
-            // Pre-seed quick calculator with real values
-            if (d.kpis.protectedNetworkKm) {
-              document.getElementById('quickL').value = d.kpis.protectedNetworkKm;
-              runOverviewCalc();
-            }
-          }
-
-          // Real Pipelines table
-          if (d.pipelines && d.pipelines.length > 0) {
-            const tbody = document.getElementById('overviewPipelinesTbody');
-            tbody.innerHTML = '';
-            d.pipelines.forEach(pipe => {
-              const tr = document.createElement('tr');
-              tr.innerHTML = `
-                <td>
-                  <strong>${pipe.tag}</strong><br>
-                  <span style="font-size: 0.75rem; color: var(--saas-dim);">${pipe.projectName} &bull; ${pipe.coating} ${pipe.condition}</span>
-                </td>
-                <td>${pipe.diameter_mm ? pipe.diameter_mm + ' mm' : 'DN250'}</td>
-                <td>${pipe.length_m} m (${pipe.length_km} km)</td>
-                <td>${pipe.surface_m2} m²</td>
-                <td><span class="tag-status tag-green">${pipe.status}</span></td>
-                <td>
-                  <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
-                </td>
-              `;
-              tbody.appendChild(tr);
-            });
-
-            // Append rectifier row
-            if (d.rectifiers && d.rectifiers.length > 0) {
-              const rect = d.rectifiers[0];
-              const trRect = document.createElement('tr');
-              trRect.innerHTML = `
-                <td>
-                  <strong>${rect.tag} (${rect.model})</strong><br>
-                  <span style="font-size: 0.75rem; color: var(--saas-dim);">Poste de soutirage &bull; ${rect.projectName}</span>
-                </td>
-                <td>Calibre ${rect.nominalCurrent}A / ${rect.nominalVoltage}V</td>
-                <td>Puissance ${rect.power} W</td>
-                <td>P = 0.87 W</td>
-                <td><span class="tag-status tag-green">Débit : ${d.kpis.totalIccpCurrentA} A</span></td>
-                <td>
-                  <a href="/studio#iccp" class="btn-action-icon primary" title="Voir dans le module ICCP">Voir ICCP &rarr;</a>
-                </td>
-              `;
-              tbody.appendChild(trRect);
-            }
           }
 
           // Real Projects list
-          if (d.projects && d.projects.length > 0) {
-            const tbodyProj = document.getElementById('allProjectsTbody');
-            tbodyProj.innerHTML = '';
-            d.projects.forEach(p => {
+          const validProjects = buildWorkspaceOptions(state.data.projects);
+          const activeProjectId = localStorage.getItem('cp_active_project') || d.activeProjectId || d.selectedProjectId || '';
+          state.selectedProjectId = validProjects.some(project => project.id === String(activeProjectId))
+            ? String(activeProjectId)
+            : (validProjects[0] || { id: '' }).id;
+          populateWorkspaceSelect(validProjects);
+          const workspaceSelect = document.getElementById('workspaceSelect');
+          if (workspaceSelect) workspaceSelect.value = state.selectedProjectId || 'sandbox_lab';
+
+          // Rend les KPI du projet + le tableau « Ouvrages & Canalisations » +
+          // l'estimateur ICCP + le hero pour le projet sélectionné, afin que la
+          // sélection actualise immédiatement les données (et non un agrégat global).
+          renderProjectView(state.selectedProjectId);
+
+          const tbodyProj = document.getElementById('allProjectsTbody');
+          if (tbodyProj) tbodyProj.innerHTML = '';
+          if (validProjects.length > 0) {
+            validProjects.forEach(p => {
+              const meta = state.data.projects.find(item => String(item.id) === p.id) || {};
               const tr = document.createElement('tr');
               tr.innerHTML = `
                 <td>
                   <strong>${p.id} &bull; ${p.name}</strong><br>
-                  <span style="font-size: 0.75rem; color: var(--saas-dim);">Canalisations EMK-42 + EMN-11</span>
+                  <span style="font-size: 0.75rem; color: var(--saas-dim);">Canalisations ${meta.pipelineLengthKm ? `${meta.pipelineLengthKm} km` : 'actives'}</span>
                 </td>
-                <td><span style="font-family: monospace; text-transform: uppercase;">${p.type}</span></td>
-                <td>${p.standard}</td>
-                <td>${p.pipelineLengthKm} km (${p.pipelineSurfaceM2} m²)</td>
-                <td>${p.rectifiersCount} poste(s)</td>
-                <td>${p.iccpCurrentA} A</td>
-                <td><span class="tag-status tag-green">${p.status}</span></td>
+                <td><span style="font-family: monospace; text-transform: uppercase;">${meta.type || p.type || 'CP'}</span></td>
+                <td>${meta.standard || p.standard || 'NACE SP0169'}</td>
+                <td>${Number(meta.pipelineLengthKm ?? p.pipelineLengthKm ?? 0).toFixed(2)} km (${Number(meta.pipelineSurfaceM2 ?? p.pipelineSurfaceM2 ?? 0).toFixed(2)} m²)</td>
+                <td>${meta.rectifiersCount ?? p.rectifiersCount ?? 0} poste(s)</td>
+                <td>${Number(meta.iccpCurrentA ?? p.iccpCurrentA ?? 0).toFixed(3)} A</td>
+                <td><span class="tag-status tag-green">${meta.status || p.status || 'Protégé (-850 mV CSE)'}</span></td>
                 <td>
-                  <a href="/studio" class="btn-action-icon primary">Ouvrir Studio</a>
-                  <button class="btn-action-icon" onclick="downloadSimulatedInvoice('${p.name}', '${p.iccpCurrentA}')">Rapport</button>
+                  <a href="/studio?projectId=${encodeURIComponent(p.id)}" class="btn-action-icon primary">Ouvrir Studio</a>
+                  <button class="btn-action-icon" onclick="downloadSimulatedInvoice('${p.name}', '${meta.iccpCurrentA || p.iccpCurrentA || 0}')">Rapport</button>
                 </td>
               `;
               tbodyProj.appendChild(tr);
@@ -1905,6 +1965,109 @@
         }
       } catch (err) {
         console.warn('Real data fetch error:', err);
+        const select = document.getElementById('workspaceSelect');
+        if (select) select.innerHTML = '<option value="">Erreur de chargement — actualisez la page</option><option value="sandbox_lab">+ Créer nouvel espace...</option>';
+        return false;
+      }
+    }
+
+    // Rend la vue (KPIs du projet + tableau ouvrages + estimateur + hero) pour
+    // l'espace de travail sélectionné. Filtre pipelines/rectifiers par projectId
+    // afin que changer de projet actualise réellement l'affichage.
+    function renderProjectView(projectId) {
+      const data = state.data || {};
+      const projects = data.projects || [];
+      const entry = projects.find(p => String(p.id) === String(projectId)) || null;
+      const pid = entry ? String(entry.id) : String(projectId);
+
+      // ── KPIs calculés pour le projet sélectionné ──
+      const netKm = entry ? Number(entry.pipelineLengthKm || 0) : 0;
+      const rectCount = entry ? Number(entry.rectifiersCount || 0) : 0;
+      const curA = entry ? Number(entry.iccpCurrentA || 0) : 0;
+      const label = entry ? `${entry.id}-${entry.name}` : (projectId || 'projet');
+
+      const kpiNetworkKm = document.getElementById('kpiNetworkKm');
+      if (kpiNetworkKm) kpiNetworkKm.innerHTML = `${netKm.toFixed(2)} <small style="font-size: 1rem; color: var(--saas-muted);">km</small>`;
+      const kpiNetworkDetail = document.getElementById('kpiNetworkDetail');
+      if (kpiNetworkDetail) kpiNetworkDetail.innerText = entry ? `Données du projet ${label}` : 'Aucun projet sélectionné';
+      const kpiNacePercent = document.getElementById('kpiNacePercent');
+      if (kpiNacePercent) kpiNacePercent.innerText = '100%';
+      const kpiRectifiersCount = document.getElementById('kpiRectifiersCount');
+      if (kpiRectifiersCount) kpiRectifiersCount.innerHTML = `${rectCount} <small style="font-size: 1rem; color: var(--saas-muted);">actif</small>`;
+      const kpiCurrentDemand = document.getElementById('kpiCurrentDemand');
+      if (kpiCurrentDemand) kpiCurrentDemand.innerText = `Courant débité : ${curA.toFixed(3)} A`;
+
+      // ── Titre hero + titre du tableau ouvrages + libellé estimateur ──
+      const heroTitle = document.getElementById('heroProjectTitle');
+      if (heroTitle) {
+        heroTitle.innerText = entry
+          ? `${entry.id}-${entry.name} (${cpTypeLabel(entry.type)})`
+          : 'Aucun projet';
+      }
+      const ouvragesTitle = document.getElementById('ouvragesTitle');
+      if (ouvragesTitle) {
+        ouvragesTitle.innerText = entry
+          ? `Ouvrages & Canalisations du Projet Actif (${label})`
+          : 'Ouvrages & Canalisations du Projet Actif';
+      }
+      const estimatorLabel = document.getElementById('estimatorProjectLabel');
+      if (estimatorLabel) estimatorLabel.innerText = label;
+
+      // ── Tableau « Ouvrages & Canalisations » filtré par projet ──
+      const tbody = document.getElementById('overviewPipelinesTbody');
+      if (tbody) {
+        tbody.innerHTML = '';
+        const pipes = (data.pipelines || []).filter(p => String(p.projectId) === pid);
+        const rects = (data.rectifiers || []).filter(r => String(r.projectId) === pid);
+
+        pipes.forEach(pipe => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>
+              <strong>${pipe.tag}</strong><br>
+              <span style="font-size: 0.75rem; color: var(--saas-dim);">${pipe.projectName} &bull; ${pipe.coating} ${pipe.condition}</span>
+            </td>
+            <td>${pipe.diameter_mm ? pipe.diameter_mm + ' mm' : 'DN250'}</td>
+            <td>${pipe.length_m} m (${pipe.length_km} km)</td>
+            <td>${pipe.surface_m2} m²</td>
+            <td><span class="tag-status tag-green">${pipe.status}</span></td>
+            <td>
+              <a href="/studio#equipements" class="btn-action-icon primary" title="Éditer dans le Studio">Éditer &rarr;</a>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        rects.forEach(rect => {
+          const trRect = document.createElement('tr');
+          trRect.innerHTML = `
+            <td>
+              <strong>${rect.tag} (${rect.model})</strong><br>
+              <span style="font-size: 0.75rem; color: var(--saas-dim);">Poste de soutirage &bull; ${rect.projectName}</span>
+            </td>
+            <td>Calibre ${rect.nominalCurrent}A / ${rect.nominalVoltage}V</td>
+            <td>Puissance ${rect.power} W</td>
+            <td>P = 0.87 W</td>
+            <td><span class="tag-status tag-green">Débit : ${curA.toFixed(3)} A</span></td>
+            <td>
+              <a href="/studio#iccp" class="btn-action-icon primary" title="Voir dans le module ICCP">Voir ICCP &rarr;</a>
+            </td>
+          `;
+          tbody.appendChild(trRect);
+        });
+
+        if (pipes.length === 0 && rects.length === 0) {
+          const trEmpty = document.createElement('tr');
+          trEmpty.innerHTML = `<td colspan="6" style="text-align:center; color: var(--saas-muted); padding: 1.5rem;">Aucun ouvrage enregistré pour ce projet. Ouvrez le Studio pour en ajouter.</td>`;
+          tbody.appendChild(trEmpty);
+        }
+      }
+
+      // ── Estimateur ICCP pré-rempli avec la longueur du projet sélectionné ──
+      if (netKm > 0) {
+        const quickL = document.getElementById('quickL');
+        if (quickL) quickL.value = netKm;
+        if (typeof runOverviewCalc === 'function') runOverviewCalc();
       }
     }
 
@@ -2079,7 +2242,16 @@
         openNewProjectModal();
         return;
       }
-      showToast(`Espace de travail actif : ${name}`, 'info');
+      // name = id du projet. Mémorise la sélection puis rafraîchit KPI + ouvrages.
+      state.selectedProjectId = name;
+      try { localStorage.setItem('cp_active_project', name); } catch (e) {}
+      if (state.data && state.data.projects) {
+        renderProjectView(name);
+        const entry = (state.data.projects || []).find(p => String(p.id) === String(name));
+        showToast(`Espace de travail actif : ${entry ? `${entry.id}-${entry.name}` : name}`, 'info');
+      } else {
+        showToast(`Espace de travail actif : ${name}`, 'info');
+      }
     }
 
     function showToast(message, type = 'info') {
