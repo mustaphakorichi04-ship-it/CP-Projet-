@@ -68,3 +68,18 @@ test_output.html
 # SCRIPTS DE VENDORISATION
 # ============================================
 vendorize.sh
+
+# ============================================
+# ARTEFACTS DE DÉVELOPPEMENT LOCAUX (hors dépôt)
+# ============================================
+# Runtime Node portable (ne JAMAIS committer)
+.node-portable/
+# Dossiers de scratch d'audit
+audit_tmp/
+audit_tmp2/
+# Sauvegardes de base de données datées
+cp_data.db.bak-*
+# Outils de debug / récupération navigateur (usage local uniquement)
+diagnostic-stockage.html
+recuperer-projets.html
+pousser-projets-serveur.html
