@@ -15,8 +15,9 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "vitest run",
+    "test": "node --test tests/engineering-core.test.js tests/transformer-rectifier.test.js tests/anodes-mixte-reinforcement.test.js tests/anodes-all-equipment.test.js tests/field-sync.test.js tests/storage-proxy-delete.test.js tests/dashboard-sync.test.js",
     "test:engineering": "node --test tests/engineering-core.test.js",
+    "test:optimization": "node --test tests/anodes-mixte-reinforcement.test.js tests/anodes-all-equipment.test.js",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "vendorize": "bash vendorize.sh",
@@ -26,9 +27,6 @@
     "vitest": "^1.6.0",
     "@vitest/coverage-v8": "^1.6.0",
     "jsdom": "^24.0.0"
-  },
-  "vitest": {
-    "config": "./tests/vitest.config.js"
   },
   "keywords": [
     "cathodic-protection",

@@ -2310,6 +2310,27 @@
       });
     }
 
+    // ── Auto-refresh Dashboard (Studio ↔ Dashboard) ──────────────
+    // Re-fetch périodique du résumé serveur pour refléter SANS
+    // rechargement manuel les ajouts / modifications / suppressions
+    // effectués dans le Studio (30 s, onglet visible uniquement, sans
+    // chevauchement). Un retour sur l'onglet déclenche aussi une
+    // actualisation immédiate.
+    let _dashRefreshInProgress = false;
+    async function refreshDashboardSilently() {
+      if (_dashRefreshInProgress) return;
+      _dashRefreshInProgress = true;
+      try { await loadRealData(); } catch (e) { /* silencieux */ }
+      _dashRefreshInProgress = false;
+    }
+    setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      refreshDashboardSilently();
+    }, 30000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') refreshDashboardSilently();
+    });
+
     // Initialize
     loadRealData();
     runWennerCalc();

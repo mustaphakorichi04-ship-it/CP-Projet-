@@ -459,6 +459,32 @@ const StorageManager = (function() {
     }
 
     // ============================================================
+    // SUPPRESSION DU SEUL ENREGISTREMENT PROJET (sans les enfants)
+    // ------------------------------------------------------------
+    // Utilisé par la ré-indexation d'ID (« Modifier le projet ») :
+    // les équipements / mesures / points carto ont DÉJÀ été
+    // ré-indexés sur le nouvel ID ; on ne supprime donc QUE
+    // l'enregistrement projet (clé = projectId), jamais les enfants.
+    // ============================================================
+    async function deleteProjectRecord(projectId) {
+        if (!projectId) return;
+
+        await forceDelete('projects', projectId);
+
+        try {
+            let all = getLS('projects') || [];
+            all = all.filter(p => p && p.id !== projectId);
+            setLS('projects', all);
+        } catch (e) {
+            console.warn('[Storage] Erreur nettoyage localStorage (projet):', e);
+        }
+
+        // Invalide le cache projet (les caches enfants sont gérés par
+        // l'appelant via save* lors de la ré-indexation).
+        _memoryCache.projects = null;
+    }
+
+    // ============================================================
     // ÉQUIPEMENTS (OPTIMISÉ : cache LRU)
     // ------------------------------------------------------------
     // P1-04 : normalizeEquipment() préserve les champs canoniques
@@ -936,6 +962,7 @@ const StorageManager = (function() {
         saveProject,
         loadProjects,
         deleteProjectCascade,
+        deleteProjectRecord,
         loadEquipmentsForProject,
         saveEquipment,
         deleteEquipment,

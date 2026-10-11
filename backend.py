@@ -8,7 +8,7 @@
 #   V04 : Support HttpOnly Cookie (JWT_SET_COOKIE=true) + CSRF token
 #   V05 : Protection CSRF (Flask-WTF CSRFProtect) pour POST/PUT/PATCH/DELETE
 #   V06 : Audit trail (table audit_log + endpoint /api/audit)
-#   V07 : Fin de l'acceptation owner_id IS NULL (sauf admin)
+#   V07 : Refus des projets sans propriétaire authentifié
 #   V08 : ProxyFix activé (X-Forwarded-*)
 #   V09 : Filtre owner_id systématique sur équipements/measurements
 #   V12 : Temporisation uniforme sur login + constant-time
@@ -87,7 +87,7 @@ IS_TESTING = (ENVIRONMENT == 'testing')
 
 BACKEND_VERSION = os.environ.get('CP_BACKEND_VERSION', '9.7.0')
 API_VERSION = 'v1'
-DATA_SCHEMA_VERSION = 3
+DATA_SCHEMA_VERSION = 4
 _start_time = time.time()
 
 
@@ -374,6 +374,20 @@ def _assign_request_id():
     g.start_time = time.time()
 
 
+@app.before_request
+def _serialize_sqlite_mutations():
+    if request.method in _WRITE_METHODS:
+        _DB_WRITE_LOCK.acquire()
+        g.sqlite_write_lock_held = True
+
+
+@app.teardown_request
+def _release_sqlite_mutation_lock(_error=None):
+    if getattr(g, 'sqlite_write_lock_held', False):
+        g.sqlite_write_lock_held = False
+        _DB_WRITE_LOCK.release()
+
+
 # ============================================================
 # 4. HEADERS DE SÉCURITÉ
 # ============================================================
@@ -399,10 +413,10 @@ def add_security_headers(response):
 
     csp = (
         "default-src 'self'; "
-        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://unpkg.com; "
-        "script-src 'self' https://cdnjs.cloudflare.com https://unpkg.com https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com https://cdnjs.cloudflare.com https://unpkg.com; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://unpkg.com https://cdn.jsdelivr.net; "
         "worker-src 'self' blob:; "
-        "font-src 'self' https://cdnjs.cloudflare.com; "
+        "font-src 'self' data: https://fonts.gstatic.com https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
         "img-src data: 'self' https://*.tile.openstreetmap.org; "
         "connect-src 'self'" + connect_src_extra +
         " https://*.tile.openstreetmap.org https://server.arcgisonline.com https://*.tile.opentopomap.org; "
@@ -472,19 +486,22 @@ def _e500(e):
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _DEFAULT_DB_PATH = os.path.join(_BASE_DIR, 'cp_data.db')
 DB_PATH = os.environ.get('CP_DB_PATH', _DEFAULT_DB_PATH)
+_DB_WRITE_LOCK = threading.RLock()
+_WRITE_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys=ON')
-    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA busy_timeout=30000')
     return conn
 
 
 def init_db():
     conn = get_db()
     cur = conn.cursor()
+    cur.execute('PRAGMA journal_mode=WAL')
 
     cur.execute('''CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -502,9 +519,14 @@ def init_db():
         created_at TEXT,
         updated_at TEXT,
         data TEXT,
+        version INTEGER NOT NULL DEFAULT 1,
         owner_id TEXT,
         FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE SET NULL
     )''')
+
+    project_columns = {row['name'] for row in cur.execute('PRAGMA table_info(projects)')}
+    if 'version' not in project_columns:
+        cur.execute('ALTER TABLE projects ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
 
     cur.execute('''CREATE TABLE IF NOT EXISTS equipments (
         id TEXT PRIMARY KEY,
@@ -835,21 +857,64 @@ def logout():
 # ============================================================
 def _assert_project_access(conn, project_id: str, write: bool = False) -> bool:
     """
-    Vérifie que l'utilisateur a accès au projet.
-    - admin : accès total
-    - sinon : owner_id doit correspondre (NULL n'est PLUS accepté)
+    Vérifie que le projet appartient à l'utilisateur authentifié.
+    Le schéma SQLite historique ne porte pas de périmètre tenant ; aucun rôle
+    ne peut donc élargir l'accès au-delà du propriétaire.
     """
     row = conn.execute(
         'SELECT owner_id FROM projects WHERE id = ?', (project_id,)
     ).fetchone()
     if not row:
         return False
-    if g.user_role == 'admin':
-        return True
     if row['owner_id'] is None:
-        # V07 : plus d'accès implicite aux orphelins
+        # Les projets sans propriétaire restent inaccessibles à tout utilisateur.
         return False
     return row['owner_id'] == g.user_id
+
+
+def _expected_project_version():
+    value = request.headers.get('If-Match')
+    if value is None:
+        return None
+    value = value.strip()
+    if value.startswith('W/'):
+        value = value[2:].strip()
+    if value.startswith('"') and value.endswith('"'):
+        value = value[1:-1]
+    try:
+        version = int(value)
+    except (TypeError, ValueError):
+        raise ValueError('En-tête If-Match invalide')
+    if version < 0:
+        raise ValueError('Version projet invalide')
+    return version
+
+
+def _project_version_conflict(expected, current):
+    return jsonify({
+        'error': 'PROJECT_VERSION_CONFLICT',
+        'expectedVersion': expected,
+        'currentVersion': current,
+        'message': 'Le projet a été modifié depuis son dernier chargement.'
+    }), 409
+
+
+def _project_version_required(current):
+    return jsonify({
+        'error': 'PROJECT_VERSION_REQUIRED',
+        'currentVersion': current,
+        'message': 'Rechargez le projet avant de le modifier.'
+    }), 428
+
+
+def _bump_project_version(conn, project_id):
+    updated_at = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        'UPDATE projects SET version = version + 1, updated_at = ? WHERE id = ?',
+        (updated_at, project_id)
+    )
+    row = conn.execute('SELECT version FROM projects WHERE id = ?', (project_id,)).fetchone()
+    return row['version'] if row else None
 
 
 # ============================================================
@@ -957,24 +1022,16 @@ def _paginate_args():
 def get_projects():
     limit, offset = _paginate_args()
     conn = get_db()
-    if g.user_role == 'admin':
-        rows = conn.execute(
-            'SELECT id, name, type, created_at, updated_at, owner_id '
-            'FROM projects ORDER BY created_at DESC LIMIT ? OFFSET ?',
-            (limit, offset)
-        ).fetchall()
-        total = conn.execute('SELECT COUNT(*) c FROM projects').fetchone()['c']
-    else:
-        rows = conn.execute(
-            'SELECT id, name, type, created_at, updated_at, owner_id '
-            'FROM projects WHERE owner_id = ? '
-            'ORDER BY created_at DESC LIMIT ? OFFSET ?',
-            (g.user_id, limit, offset)
-        ).fetchall()
-        total = conn.execute(
-            'SELECT COUNT(*) c FROM projects WHERE owner_id = ?',
-            (g.user_id,)
-        ).fetchone()['c']
+    rows = conn.execute(
+        'SELECT id, name, type, created_at, updated_at, owner_id, version '
+        'FROM projects WHERE owner_id = ? '
+        'ORDER BY created_at DESC LIMIT ? OFFSET ?',
+        (g.user_id, limit, offset)
+    ).fetchall()
+    total = conn.execute(
+        'SELECT COUNT(*) c FROM projects WHERE owner_id = ?',
+        (g.user_id,)
+    ).fetchone()['c']
     conn.close()
     return jsonify({'items': [dict(r) for r in rows], 'total': total,
                     'limit': limit, 'offset': offset})
@@ -1026,7 +1083,7 @@ def create_project():
         raise
     conn.close()
     audit_log('PROJECT_CREATE', 'project', data['id'], data['id'])
-    return jsonify({'success': True, 'id': data['id']}), 201
+    return jsonify({'success': True, 'id': data['id'], 'version': 1}), 201
 
 
 @app.route('/api/projects/<project_id>', methods=['PUT'])
@@ -1036,11 +1093,15 @@ def update_project(project_id):
         return jsonify({'error': 'ID invalide'}), 400
 
     data = request.get_json(silent=True) or {}
+    try:
+        expected_version = _expected_project_version()
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
 
     conn = get_db()
     created = False
     try:
-        conn.execute('BEGIN')
+        conn.execute('BEGIN IMMEDIATE')
 
         # ─────────────────────────────────────────────────────────
         # FIX 404 : UPSERT (create if not exists)
@@ -1051,10 +1112,13 @@ def update_project(project_id):
         # créer au premier PUT au lieu de renvoyer 404 en boucle.
         # ─────────────────────────────────────────────────────────
         existing = conn.execute(
-            'SELECT owner_id FROM projects WHERE id = ?', (project_id,)
+            'SELECT owner_id, version FROM projects WHERE id = ?', (project_id,)
         ).fetchone()
 
         if existing is None:
+            if expected_version not in (None, 0):
+                conn.rollback(); conn.close()
+                return _project_version_conflict(expected_version, None)
             # Création implicite (upsert)
             now_iso = datetime.now(timezone.utc).isoformat()
             project_name = (
@@ -1081,6 +1145,7 @@ def update_project(project_id):
                  g.user_id)
             )
             created = True
+            new_version = 1
         else:
             # Projet existant → vérification des droits + update classique
             if not _assert_project_access(conn, project_id, write=True):
@@ -1089,12 +1154,27 @@ def update_project(project_id):
                           project_id, 'denied')
                 return jsonify({'error': 'Introuvable'}), 404
 
-            conn.execute(
-                'UPDATE projects SET data = ?, updated_at = ? WHERE id = ?',
+            current_version = existing['version']
+            if expected_version is None:
+                conn.rollback(); conn.close()
+                return _project_version_required(current_version)
+            if expected_version != current_version:
+                conn.rollback(); conn.close()
+                return _project_version_conflict(expected_version, current_version)
+
+            cursor = conn.execute(
+                'UPDATE projects SET data = ?, updated_at = ?, version = version + 1 '
+                'WHERE id = ? AND version = ?',
                 (json.dumps(data),
                  datetime.now(timezone.utc).isoformat(),
-                 project_id)
+                 project_id, current_version)
             )
+            if cursor.rowcount != 1:
+                conn.rollback()
+                current = conn.execute('SELECT version FROM projects WHERE id = ?', (project_id,)).fetchone()
+                conn.close()
+                return _project_version_conflict(expected_version, current['version'] if current else None)
+            new_version = current_version + 1
 
         conn.commit()
     except Exception:
@@ -1108,22 +1188,39 @@ def update_project(project_id):
         extra={'created': created}
     )
 
-    return jsonify({'success': True, 'created': created})
+    return jsonify({'success': True, 'created': created, 'version': new_version})
 
 @app.route('/api/projects/<project_id>', methods=['DELETE'])
 @token_required
 def delete_project(project_id):
     if not ID_RE.match(project_id):
         return jsonify({'error': 'ID invalide'}), 400
+    try:
+        expected_version = _expected_project_version()
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
     conn = get_db()
     try:
-        conn.execute('BEGIN')
+        conn.execute('BEGIN IMMEDIATE')
         if not _assert_project_access(conn, project_id, write=True):
             conn.rollback(); conn.close()
             audit_log('PROJECT_DELETE_DENIED', 'project', project_id,
                       project_id, 'denied')
             return jsonify({'error': 'Introuvable'}), 404
-        conn.execute('DELETE FROM projects WHERE id = ?', (project_id,))
+        project = conn.execute('SELECT version FROM projects WHERE id = ?', (project_id,)).fetchone()
+        if expected_version is None:
+            conn.rollback(); conn.close()
+            return _project_version_required(project['version'])
+        if expected_version != project['version']:
+            conn.rollback(); conn.close()
+            return _project_version_conflict(expected_version, project['version'])
+        cursor = conn.execute(
+            'DELETE FROM projects WHERE id = ? AND version = ?',
+            (project_id, project['version'])
+        )
+        if cursor.rowcount != 1:
+            conn.rollback(); conn.close()
+            return _project_version_conflict(expected_version, None)
         conn.commit()
     except Exception:
         conn.rollback(); conn.close(); raise
@@ -1145,6 +1242,7 @@ def get_equipments(project_id):
     if not _assert_project_access(conn, project_id):
         conn.close()
         return jsonify({'error': 'Introuvable'}), 404
+    project_row = conn.execute('SELECT version FROM projects WHERE id = ?', (project_id,)).fetchone()
     rows = conn.execute(
         'SELECT id, project_id, tag, type, surface, included, system_id, data '
         'FROM equipments WHERE project_id = ? ORDER BY tag LIMIT ? OFFSET ?',
@@ -1160,7 +1258,13 @@ def get_equipments(project_id):
         d = dict(r)
         d['data'] = json.loads(d['data']) if d['data'] else {}
         out.append(d)
-    return jsonify({'items': out, 'total': total, 'limit': limit, 'offset': offset})
+    return jsonify({
+        'items': out,
+        'total': total,
+        'limit': limit,
+        'offset': offset,
+        'projectVersion': project_row['version']
+    })
 
 
 @app.route('/api/equipments', methods=['POST'])
@@ -1169,14 +1273,22 @@ def create_equipment():
     data = request.get_json(silent=True) or {}
     try:
         _validate_equipment_payload(data)
+        expected_version = _expected_project_version()
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     conn = get_db()
     try:
-        conn.execute('BEGIN')
+        conn.execute('BEGIN IMMEDIATE')
         if not _assert_project_access(conn, data['projectId'], write=True):
             conn.rollback(); conn.close()
             return jsonify({'error': 'Projet non autorisé'}), 403
+        project = conn.execute('SELECT version FROM projects WHERE id = ?', (data['projectId'],)).fetchone()
+        if expected_version is None:
+            conn.rollback(); conn.close()
+            return _project_version_required(project['version'])
+        if expected_version != project['version']:
+            conn.rollback(); conn.close()
+            return _project_version_conflict(expected_version, project['version'])
         full_data = {k: v for k, v in data.items()
                      if k not in ('id', 'projectId', 'tag', 'type',
                                   'surface', 'included', 'systemId')}
@@ -1188,6 +1300,7 @@ def create_equipment():
              1 if data.get('included', True) else 0,
              data.get('systemId'), json.dumps(full_data))
         )
+        project_version = _bump_project_version(conn, data['projectId'])
         conn.commit()
     except sqlite3.IntegrityError:
         conn.rollback(); conn.close()
@@ -1196,7 +1309,7 @@ def create_equipment():
         conn.rollback(); conn.close(); raise
     conn.close()
     audit_log('EQUIPMENT_CREATE', 'equipment', data['id'], data['projectId'])
-    return jsonify({'success': True, 'id': data['id']}), 201
+    return jsonify({'success': True, 'id': data['id'], 'version': project_version}), 201
 
 
 @app.route('/api/equipments/<equipment_id>', methods=['PUT'])
@@ -1207,11 +1320,12 @@ def update_equipment(equipment_id):
     data = request.get_json(silent=True) or {}
     try:
         _validate_equipment_payload(data)
+        expected_version = _expected_project_version()
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     conn = get_db()
     try:
-        conn.execute('BEGIN')
+        conn.execute('BEGIN IMMEDIATE')
         existing = conn.execute(
             'SELECT project_id FROM equipments WHERE id = ?', (equipment_id,)
         ).fetchone()
@@ -1223,6 +1337,13 @@ def update_equipment(equipment_id):
             audit_log('EQUIPMENT_UPDATE_DENIED', 'equipment', equipment_id,
                       existing['project_id'], 'denied')
             return jsonify({'error': 'Accès refusé'}), 403
+        project = conn.execute('SELECT version FROM projects WHERE id = ?', (existing['project_id'],)).fetchone()
+        if expected_version is None:
+            conn.rollback(); conn.close()
+            return _project_version_required(project['version'])
+        if expected_version != project['version']:
+            conn.rollback(); conn.close()
+            return _project_version_conflict(expected_version, project['version'])
         full_data = {k: v for k, v in data.items()
                      if k not in ('id', 'projectId', 'tag', 'type',
                                   'surface', 'included', 'systemId')}
@@ -1234,13 +1355,14 @@ def update_equipment(equipment_id):
              1 if data.get('included', True) else 0,
              data.get('systemId'), json.dumps(full_data), equipment_id)
         )
+        project_version = _bump_project_version(conn, existing['project_id'])
         conn.commit()
     except Exception:
         conn.rollback(); conn.close(); raise
     conn.close()
     audit_log('EQUIPMENT_UPDATE', 'equipment', equipment_id,
               existing['project_id'])
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'version': project_version})
 
 
 @app.route('/api/equipments/<equipment_id>', methods=['DELETE'])
@@ -1248,9 +1370,13 @@ def update_equipment(equipment_id):
 def delete_equipment(equipment_id):
     if not ID_RE.match(equipment_id):
         return jsonify({'error': 'ID invalide'}), 400
+    try:
+        expected_version = _expected_project_version()
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
     conn = get_db()
     try:
-        conn.execute('BEGIN')
+        conn.execute('BEGIN IMMEDIATE')
         existing = conn.execute(
             'SELECT project_id FROM equipments WHERE id = ?', (equipment_id,)
         ).fetchone()
@@ -1262,14 +1388,22 @@ def delete_equipment(equipment_id):
             audit_log('EQUIPMENT_DELETE_DENIED', 'equipment', equipment_id,
                       existing['project_id'], 'denied')
             return jsonify({'error': 'Accès refusé'}), 403
+        project = conn.execute('SELECT version FROM projects WHERE id = ?', (existing['project_id'],)).fetchone()
+        if expected_version is None:
+            conn.rollback(); conn.close()
+            return _project_version_required(project['version'])
+        if expected_version != project['version']:
+            conn.rollback(); conn.close()
+            return _project_version_conflict(expected_version, project['version'])
         conn.execute('DELETE FROM equipments WHERE id = ?', (equipment_id,))
+        project_version = _bump_project_version(conn, existing['project_id'])
         conn.commit()
     except Exception:
         conn.rollback(); conn.close(); raise
     conn.close()
     audit_log('EQUIPMENT_DELETE', 'equipment', equipment_id,
               existing['project_id'])
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'version': project_version})
 
 
 # ============================================================
@@ -1284,13 +1418,17 @@ def full_sync(project_id):
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({'error': 'Payload invalide'}), 400
+    try:
+        expected_version = _expected_project_version()
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
 
     conn = get_db()
     deleted = set()
     equipments = []
     created_project = False
     try:
-        conn.execute('BEGIN')
+        conn.execute('BEGIN IMMEDIATE')
 
         # ─────────────────────────────────────────────────────────
         # FIX 404 : UPSERT projet (même logique que PUT).
@@ -1301,10 +1439,13 @@ def full_sync(project_id):
         # retourneront silencieusement.
         # ─────────────────────────────────────────────────────────
         existing_project = conn.execute(
-            'SELECT owner_id FROM projects WHERE id = ?', (project_id,)
+            'SELECT owner_id, version FROM projects WHERE id = ?', (project_id,)
         ).fetchone()
 
         if existing_project is None:
+            if expected_version not in (None, 0):
+                conn.rollback(); conn.close()
+                return _project_version_conflict(expected_version, None)
             now_iso = datetime.now(timezone.utc).isoformat()
             project_blob = data.get('project') or {}
             project_name = project_blob.get('name') or project_id
@@ -1323,6 +1464,7 @@ def full_sync(project_id):
             )
             created_project = True
             existing_ids = set()
+            new_version = 1
         else:
             # Projet existant → vérification des droits
             if not _assert_project_access(conn, project_id, write=True):
@@ -1331,16 +1473,34 @@ def full_sync(project_id):
                           project_id, 'denied')
                 return jsonify({'error': 'Accès refusé'}), 403
 
+            current_version = existing_project['version']
+            if expected_version is None:
+                conn.rollback(); conn.close()
+                return _project_version_required(current_version)
+            if expected_version != current_version:
+                conn.rollback(); conn.close()
+                return _project_version_conflict(expected_version, current_version)
+
             existing_ids = {r['id'] for r in conn.execute(
                 'SELECT id FROM equipments WHERE project_id = ?',
                 (project_id,)
             ).fetchall()}
 
         now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            'UPDATE projects SET data=?, updated_at=? WHERE id=?',
-            (json.dumps(data), now, project_id)
-        )
+        if created_project:
+            new_version = 1
+        else:
+            cursor = conn.execute(
+                'UPDATE projects SET data=?, updated_at=?, version=version + 1 '
+                'WHERE id=? AND version=?',
+                (json.dumps(data), now, project_id, current_version)
+            )
+            if cursor.rowcount != 1:
+                conn.rollback()
+                current = conn.execute('SELECT version FROM projects WHERE id = ?', (project_id,)).fetchone()
+                conn.close()
+                return _project_version_conflict(expected_version, current['version'] if current else None)
+            new_version = current_version + 1
 
         equipments = data.get('equipments', []) or []
         if not isinstance(equipments, list):
@@ -1396,7 +1556,7 @@ def full_sync(project_id):
                      'deleted': len(deleted),
                      'created_project': created_project})
 
-    return jsonify({'success': True, 'createdProject': created_project})
+    return jsonify({'success': True, 'createdProject': created_project, 'version': new_version})
 
 # ============================================================
 # 15. AUDIT ENDPOINT (admin)
@@ -1568,6 +1728,7 @@ def health_v1():
 
 
 @app.route('/api/dashboard/summary', methods=['GET'])
+@token_required
 def get_dashboard_summary():
     """
     Retourne les données et KPIs réels calculés de CP Engineer Pro :
@@ -1579,13 +1740,18 @@ def get_dashboard_summary():
     """
     try:
         conn = get_db()
-        projects = conn.execute('SELECT id, name, type, created_at, updated_at, data FROM projects').fetchall()
+        projects = conn.execute(
+            'SELECT id, name, type, created_at, updated_at, data '
+            'FROM projects WHERE owner_id = ?',
+            (g.user_id,)
+        ).fetchall()
         
         total_pipeline_len_m = 0.0
         total_pipeline_surf_m2 = 0.0
         pipelines_list = []
         rectifiers_list = []
         groundbeds_list = []
+        equipments_list = []
         total_iccp_current_A = 0.0
         total_rectifier_nominal_A = 0.0
         
@@ -1609,6 +1775,29 @@ def get_dashboard_summary():
                 length_m = float(dims.get('longueur_m', 0) or 0)
                 diam_m = float(dims.get('diametre_m', 0) or 0)
                 surf = float(eq['surface'] or 0)
+                cp_data = eq_data.get('cpData', {}) or {}
+                cp_results = cp_data.get('results', {}) or {}
+
+                equipments_list.append({
+                    'id': eq['id'],
+                    'tag': eq['tag'],
+                    'projectId': p_id,
+                    'projectName': p_name,
+                    'type': eq_type,
+                    'surface_m2': round(surf, 2),
+                    'included': bool(eq['included']),
+                    'systemId': eq['system_id'],
+                    'dimensions': dims,
+                    'calculated': bool(cp_data.get('calculated')),
+                    'results': cp_results,
+                    'material': eq_data.get('material'),
+                    'coatingType': eq_data.get('coatingType'),
+                    'coatingCondition': eq_data.get('coatingCondition'),
+                    'model': eq_data.get('model'),
+                    'nominalCurrent': eq_data.get('nominalCurrent', eq_data.get('current')),
+                    'nominalVoltage': eq_data.get('nominalVoltage', eq_data.get('voltage')),
+                    'power': eq_data.get('power')
+                })
                 
                 if 'pipeline' in eq_type:
                     p_pipe_len += length_m
@@ -1709,7 +1898,8 @@ def get_dashboard_summary():
             'projects': projects_summary,
             'pipelines': pipelines_list,
             'rectifiers': rectifiers_list,
-            'groundbeds': groundbeds_list
+            'groundbeds': groundbeds_list,
+            'equipments': equipments_list
         })
     except Exception as e:
         logger.error("[DASHBOARD] Erreur get_dashboard_summary: %s", e)

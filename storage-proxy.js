@@ -1046,6 +1046,123 @@
     };
 
     // ============================================================
+    // 6bis. PROXY : DELETE PROJECT (BACKEND + LOCAL)
+    // ------------------------------------------------------------
+    // FIX SYNC-DELETE : la suppression d'un projet dans le Studio
+    // n'était propagée qu'en local (IndexedDB/localStorage). La ligne
+    // `projects` et ses `equipments` restaient dans SQLite → le
+    // Dashboard (/api/dashboard/summary) continuait d'afficher le
+    // projet supprimé.
+    //
+    // On appelle ici DELETE /api/projects/<id> (suppression CASCADE
+    // des équipements via FK) avec l'If-Match de version exigé par le
+    // backend, puis on exécute la cascade locale d'origine.
+    //
+    // • 404 côté backend  → projet déjà absent : on continue en local.
+    // • 409/428 (version) → on tente un re-jeu avec la version serveur
+    //                        (currentVersion) renvoyée par le backend.
+    // • Hors ligne / erreur→ on supprime quand même en local (le
+    //                        backend n'est pas bloqué), on journalise.
+    // ============================================================
+    async function _deleteProjectBackendRecord(projectId) {
+        if (!projectId || !_isBackendAvailable || !isAuthenticated()) return false;
+
+        // Résout la version courante : cache local, sinon GET projet serveur.
+        let version = _projectVersions.get(projectId);
+        if (version === undefined) {
+            try {
+                const probe = await fetchWithRetry(`${API_BASE_URL}/projects/${projectId}`, {
+                    method: 'GET'
+                }, RETRY_CONFIG.maxAttempts);
+                if (probe.ok) {
+                    const body = await probe.json();
+                    if (Number.isInteger(body.version)) {
+                        rememberProjectVersionValue(projectId, body.version);
+                        version = body.version;
+                    }
+                } else if (probe.status === 404) {
+                    // Déjà absent côté backend : rien à supprimer.
+                    return true;
+                }
+            } catch (e) {
+                console.warn('[Proxy] Version projet introuvable pour DELETE:', e && e.message);
+            }
+        }
+
+        try {
+            let response = await fetchWithRetry(`${API_BASE_URL}/projects/${projectId}`, withProjectVersion(projectId, {
+                method: 'DELETE'
+            }), RETRY_CONFIG.maxAttempts);
+
+            // Version manquante (428) ou périmée (409) → re-jeu avec la
+            // version courante renvoyée par le backend.
+            if (isProjectVersionFailure(response)) {
+                let serverVersion = null;
+                try { serverVersion = (await response.clone().json()).currentVersion; } catch (e) {}
+                if (Number.isInteger(serverVersion)) {
+                    rememberProjectVersionValue(projectId, serverVersion);
+                    response = await fetchWithRetry(`${API_BASE_URL}/projects/${projectId}`, {
+                        method: 'DELETE',
+                        headers: { 'If-Match': String(serverVersion) }
+                    }, RETRY_CONFIG.maxAttempts);
+                }
+            }
+
+            if (response.ok || response.status === 404) {
+                _lastSyncTimestamp = Date.now();
+                _conflictedProjects.delete(projectId);
+                try { localStorage.setItem('cp_sync_conflicts', JSON.stringify([..._conflictedProjects])); } catch (e) {}
+                _projectVersions.delete(projectId);
+                try { localStorage.setItem('cp_project_versions', JSON.stringify(Object.fromEntries(_projectVersions))); } catch (e) {}
+                return true;
+            }
+
+            const text = await response.text();
+            console.warn('[Proxy] Échec suppression backend du projet:', text);
+        } catch (e) {
+            console.warn('[Proxy] Erreur suppression backend du projet (après retry):', e);
+            if (e.message && e.message.includes('session expirée')) {
+                clearToken();
+            }
+        }
+        return false;
+    }
+
+    const originalDeleteProjectCascade = StorageManager.deleteProjectCascade;
+    // Garde-fou : si storage.js n'est pas encore à jour (cache), le proxy
+    // n'enveloppe pas une méthode absente.
+    if (typeof originalDeleteProjectCascade === 'function') {
+        StorageManager.deleteProjectCascade = async function(projectId) {
+            if (!projectId) return originalDeleteProjectCascade.call(this, projectId);
+
+            // 1. Suppression côté backend (cascade FK des équipements).
+            await _deleteProjectBackendRecord(projectId);
+
+            // 2. Cascade locale d'origine (toujours exécutée, même hors-ligne).
+            const result = await originalDeleteProjectCascade.call(this, projectId);
+
+            _emitDataSynced({
+                type: 'projectDeleted',
+                id: projectId
+            });
+
+            return result;
+        };
+    }
+
+    // Re-indexation d'ID (« Modifier le projet ») : l'ancien enregistrement
+    // projet doit être supprimé côté backend (best-effort), le nouveau étant
+    // créé par le fullSync déclenché sur projectLoaded.
+    const originalDeleteProjectRecord = StorageManager.deleteProjectRecord;
+    if (typeof originalDeleteProjectRecord === 'function') {
+        StorageManager.deleteProjectRecord = async function(projectId) {
+            if (!projectId) return originalDeleteProjectRecord.call(this, projectId);
+            await _deleteProjectBackendRecord(projectId);
+            return originalDeleteProjectRecord.call(this, projectId);
+        };
+    }
+
+    // ============================================================
     // 7. PROXY : LOAD EQUIPMENTS (avec cache)
     // ============================================================
     const originalLoadEquipmentsForProject = StorageManager.loadEquipmentsForProject;

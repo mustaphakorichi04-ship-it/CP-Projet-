@@ -329,6 +329,59 @@ def test_concurrent_full_sync_serializes_and_rejects_stale_snapshot(session_toke
     assert row['count'] == 1
 
 
+def test_delete_project_removes_it_and_its_equipments_from_dashboard_summary(session_tokens):
+    """Studio → Backend : supprimer un projet le retire du résumé Dashboard.
+
+    Le proxy storage-proxy.js appelle DELETE /api/projects/<id> (If-Match),
+    la FK ON DELETE CASCADE supprime les équipements, et /api/dashboard/summary
+    ne renvoie plus le projet : les KPI Dashboard se recalculent sans lui.
+    """
+    client = backend.app.test_client()
+    headers = {'Authorization': f"Bearer {session_tokens['owner-a']}"}
+
+    # 1. Projet dédié (n'affecte pas les autres tests qui partagent la DB).
+    created = client.post('/api/projects', headers=headers, json={
+        'id': 'PROJ-DEL', 'name': 'Projet À Supprimer', 'type': 'mixte', 'data': {}
+    })
+    assert created.status_code == 201
+
+    # 2. Un équipement rattaché (version projet courante = 1).
+    equipment = client.post('/api/equipments', headers={**headers, 'If-Match': '1'}, json={
+        'id': 'equip-del', 'projectId': 'PROJ-DEL', 'tag': 'PIPE-DEL',
+        'type': 'pipeline_enterre', 'surface': 5,
+    })
+    assert equipment.status_code == 201
+
+    # 3. Visible dans le résumé (ce que lit le Dashboard).
+    summary = client.get('/api/dashboard/summary', headers=headers).get_json()
+    assert 'PROJ-DEL' in {p['id'] for p in summary['projects']}
+    assert 'PROJ-DEL' in {e['projectId'] for e in summary['equipments']}
+
+    # 4. DELETE sans If-Match → 428 (garde-fou de version).
+    unversioned = client.delete('/api/projects/PROJ-DEL', headers=headers)
+    assert unversioned.status_code == 428
+
+    # 5. DELETE avec la version courante → 200.
+    version = client.get('/api/projects/PROJ-DEL', headers=headers).get_json()['version']
+    deleted = client.delete('/api/projects/PROJ-DEL', headers={**headers, 'If-Match': str(version)})
+    assert deleted.status_code == 200
+
+    # 6. Projet ET équipements (cascade FK) disparaissent du résumé.
+    summary = client.get('/api/dashboard/summary', headers=headers).get_json()
+    assert 'PROJ-DEL' not in {p['id'] for p in summary['projects']}
+    assert 'PROJ-DEL' not in {e['projectId'] for e in summary['equipments']}
+    connection = backend.get_db()
+    remaining = connection.execute(
+        'SELECT COUNT(*) AS count FROM equipments WHERE project_id = ?', ('PROJ-DEL',)
+    ).fetchone()['count']
+    connection.close()
+    assert remaining == 0
+
+    # 7. Re-suppression → 404 (le proxy de suppression tolère ce cas).
+    again = client.delete('/api/projects/PROJ-DEL', headers={**headers, 'If-Match': str(version)})
+    assert again.status_code == 404
+
+
 def test_old_database_migrates_projects_version_column(tmp_path, monkeypatch):
     database_path = tmp_path / 'legacy.db'
     connection = backend.sqlite3.connect(database_path)

@@ -6,11 +6,16 @@ const test = require('node:test');
 const vm = require('node:vm');
 const CalculationEngine = require('../engine.js');
 const ACCorrosionEngine = require('../acCorrosionEngine.js');
+// Utils est exposé par engine.js (calculateICCPAnodeLife, safeNumber…) :
+// global lexical en navigateur, mais seulement accessible ici via
+// CalculationEngine.Utils (voir bas de engine.js).
+const Utils = CalculationEngine.Utils;
 
 test('requiredCurrent preserves mA/m2 to A conversion', () => {
+    // FIX-C1 : f_c = DF × k (un seul facteur d'exposition) → 0.03 × 1.2 = 0.036
     const result = CalculationEngine.requiredCurrent(100, 5, 0.95, 0.03, 1.2, 'ISO 15589-1');
-    assert.ok(Math.abs(result.exposedArea - 0.18) < 1e-12);
-    assert.ok(Math.abs(result.currentAmperes - 0.0009) < 1e-12);
+    assert.ok(Math.abs(result.exposedArea - 3.6) < 1e-12);
+    assert.ok(Math.abs(result.currentAmperes - 0.018) < 1e-12);
     assert.equal(result.units.currentDensity, 'mA/m²');
 });
 
@@ -23,7 +28,8 @@ test('equipment surface is recomputed from canonical pipeline dimensions', () =>
 });
 
 test('vertical anode resistance follows Dwight equation', () => {
-    const expected = (100 / (2 * Math.PI)) * (Math.log(40) - 1);
+    // FIX-C5 : Dwight/IEEE 142 — R = ρ/(2πL) × (ln(8L/d) − 1), d = Ø
+    const expected = (100 / (2 * Math.PI)) * (Math.log(80) - 1);
     assert.ok(Math.abs(CalculationEngine.anodeResistanceVertical(100, 1, 0.1) - expected) < 1e-12);
 });
 
@@ -269,14 +275,15 @@ test('legacy interference keeps missing AC/DC inputs non-assessable', () => {
 });
 
 test('calculateCoatingDegradationFactor calculates and caps f_c <= 1', () => {
+    // FIX-C1 : f_c = DF × k (plus de (1-ε)×DF) → 0.05 × 1.2 = 0.06
     const norm = CalculationEngine.calculateCoatingDegradationFactor(0.95, 0.05, 1.2);
-    assert.ok(Math.abs(norm.f_c - 0.003) < 1e-12);
+    assert.ok(Math.abs(norm.f_c - 0.06) < 1e-12);
     assert.equal(norm.coatingCapApplied, false);
 
     const capped = CalculationEngine.calculateCoatingDegradationFactor(0.1, 0.9, 2.0);
     assert.equal(capped.f_c, 1.0);
     assert.equal(capped.coatingCapApplied, true);
-    assert.equal(capped.f_c_uncapped, 1.62);
+    assert.equal(capped.f_c_uncapped, 1.8);
 });
 
 test('calculateLayeredSoilResistivity computes arithmetic and harmonic bounds', () => {

@@ -70,7 +70,12 @@ const UnitConverter = {
 // ============================================================
 const APP_CONFIG = Object.freeze({
     // ---- Version canonique de l'application (SSOT) ----
-    VERSION: '9.6.0',
+    VERSION: '9.7.5',
+
+
+
+
+
 
     // ---- Métadonnées ----
     NAME: 'CP Engineer Pro',
@@ -803,16 +808,23 @@ const CalculationEngine = (function() {
 
     /**
      * Purpose: Résistance d'une anode verticale cylindrique (Dwight)
-     * Formula: R = rho/(2*pi*L) * (ln(4L/d) - 1)
+     * Formula: R = rho/(2*pi*L) * (ln(8L/d) - 1)  ≡  ln(4L/r), r = rayon
      * Units: rho [ohm.m], L [m], d [m] → R [ohm]
      * Assumptions: électrode cylindrique verticale en sol homogène
-     * Reference: Dwight (1936) / pratique CP courante
+     * Reference: Dwight (1936) / IEEE 142-2007 §4 (d = diamètre)
      * Validation: retourne 0 si paramètres invalides
+     *
+     * FIX-C5 (2026-10-09 — analyse experte validée) :
+     * l'ancienne variante ln(4L/d) sous-estimait R de ~20 %
+     * (42,79 Ω au lieu de 53,82 Ω pour ρ=100, L=1 m, d=0,1 m) et
+     * divergeait de l'API NestJS (ln(4L/r) ≡ ln(8L/d)) — désormais
+     * alignée sur Dwight/IEEE 142 et sur le repli de
+     * AnodesOptimizationEngine._anodeDwightResistance.
      */
     const anodeResistanceVertical = memoize(function(rho, L, d) {
         if (!isFinite(rho) || !isFinite(L) || !isFinite(d)) return 0;
         if (rho <= 0 || L <= 0 || d <= 0) return 0;
-        const ratio = 4 * L / d;
+        const ratio = 8 * L / d;
         if (ratio <= 1) return 0;  // domaine logarithmique invalide
         const R = (rho / (2 * Math.PI * L)) * (Math.log(ratio) - 1);
         return isFinite(R) && R > 0 ? R : 0;
@@ -856,11 +868,14 @@ const CalculationEngine = (function() {
     // ============================================================
     // GAP-COAT-02 : FACTEUR DE DÉGRADATION NET DU REVÊTEMENT
     // ------------------------------------------------------------
-    // Calcule le facteur de dégradation net f_c = (1-ε) × DF × k
-    // avec cap à 1.0 (structure nue = cas le plus défavorable).
+    // FIX-C1 (2026-10-09) : f_c = min(DF × k, 1.0)
+    // L'ancienne variante (1-ε) × DF × k comptait DOUBLE l'exposition
+    // (SP0169 defect factor DF = fraction nue sur surface totale, la
+    // même grandeur que (1-ε)). Convention validée : DF seul × k.
+    // eps reste retourné comme métadonnée de traçabilité.
     //
     // Paramètres :
-    //   eps [-]  Efficacité revêtement (0=nu, 1=parfait)
+    //   eps [-]  Efficacité revêtement (0=nu, 1=parfait) — métadonnée
     //   DF  [-]  Densité de défauts (fraction de surface exposée)
     //   k   [-]  Facteur de vieillissement (≥ 1.0)
     //
@@ -869,7 +884,7 @@ const CalculationEngine = (function() {
 
     /**
      * Purpose: Facteur de dégradation net du revêtement
-     * Formula: f_c = min((1-ε) × DF × k, 1.0)
+     * Formula: f_c = min(DF × k, 1.0)
      * Units: ε [-], DF [-], k [-] → f_c [-]
      * Reference: ISO 15589-1 §7.3 / NACE SP0169 §A.3
      */
@@ -877,7 +892,7 @@ const CalculationEngine = (function() {
         const safeEps = (isFinite(eps) && eps >= 0 && eps <= 1) ? eps : 0.0;
         const safeDF  = (isFinite(DF)  && DF  >= 0 && DF  <= 1) ? DF  : 1.0;
         const safeK   = (isFinite(k)   && k   >= 1)             ? k   : 1.0;
-        const f_c_raw = (1 - safeEps) * safeDF * safeK;
+        const f_c_raw = safeDF * safeK;
         const f_c     = Math.min(f_c_raw, 1.0);
         return {
             f_c:               f_c,
@@ -987,28 +1002,36 @@ const CalculationEngine = (function() {
 
     /**
      * Purpose: Courant de protection requis
-     * Formula: I = S × (1-ε) × DF × k × J / 1000
+     * Formula: I = S × min(DF × k, 1) × J / 1000
      * Units: S [m²], ε [-], DF [-], k [-], J [mA/m²] → I [A]
      * Reference: ISO 15589-1 / NACE SP0169
+     *
+     * FIX-C1 (2026-10-09 — analyse experte validée) :
+     * SUPPRESSION DU DOUBLE COMPTAGE (1-ε) × DF.
+     * SP0169 définit le defect factor (DF) comme la fraction de surface
+     * nue rapportée à la surface TOTALE ; (1-ε) mesure la même grandeur.
+     * Leur produit donnait f_c = 0,0018 au lieu de 0,036 pour
+     * ε=0,95 / DF=0,03 / k=1,2 → courant sous-estimé ×20 (0,029 A au
+     * lieu de 0,575 A sur S=3191,86 m²). Convention retenue : DF seul × k,
+     * plafonné à 1.0. `eps` est conservé dans la signature pour
+     * compatibilité des appelants (traçabilité DNV / UI) mais n'entre
+     * plus dans f_c.
      *
      * NOTE P0-02 : J est en mA/m² (unité d'entrée canonique pour cette
      * fonction, conforme au paramétrage UI). La division par 1000 convertit
      * mA → A. Le résultat est en A.
      */
     const requiredCurrent = memoize(function(S, J, eps, DF, k, norm) {
-        // GAP-COAT-01 : Le facteur de dégradation net f_c = (1-ε) × DF × k
-        // DOIT être plafonné à 1.0 (surface exposée ≤ surface totale).
-        // Référence : ISO 15589-1 §7.3 — le produit DF×k représente la
-        // dégradation cumulée du revêtement ; au-delà de 1, la structure
-        // est supposée nue (cas le plus défavorable).
-        const f_c_raw = (1 - eps) * DF * k;
+        // FIX-C1 : f_c = DF × k — UN SEUL facteur d'exposition,
+        // plafonné à 1.0 (structure nue = cas le plus défavorable).
+        const f_c_raw = DF * k;
         const f_c_capped = Math.min(f_c_raw, 1.0);
         const coatingCapApplied = f_c_raw > 1.0;
         const exposedArea = S * f_c_capped;
         const currentAmperes = (exposedArea * J) / 1000;
         const formula = norm === 'NACE SP0169' ?
-            'I = S × min((1-ε)×DF×k, 1) × J / 1000 (NACE SP0169)' :
-            'I = S × min((1-ε)×DF×k, 1) × J / 1000 (ISO 15589-1 §7.3)';
+            'I = S × min(DF×k, 1) × J / 1000 (NACE SP0169)' :
+            'I = S × min(DF×k, 1) × J / 1000 (ISO 15589-1 §7.3)';
         return {
             currentAmperes: currentAmperes,
             exposedArea: exposedArea,
@@ -1077,11 +1100,13 @@ const CalculationEngine = (function() {
             : (safeEinit + safeEfinal) / 2;
         const safeJmoy   = (isFinite(J_moy) && J_moy > 0) ? J_moy : (J_init + J_final) / 2;
 
-        // GAP-COAT-01 : Plafonnement des facteurs de dégradation nets à 1.0
-        // f_c = (1-ε) × DF × k ≤ 1 — ISO 15589-1 §7.3 / DNV-RP-B401 §5.3
-        const f_c_init_raw  = (1 - safeEinit)  * safeDF * safeKinit;
-        const f_c_moy_raw   = (1 - safeEmoy)   * safeDF * safeKmoy;
-        const f_c_final_raw = (1 - safeEfinal) * safeDF * safeKfinal;
+        // GAP-COAT-01 / FIX-C1 : plafonnement à 1.0 — UN SEUL facteur
+        // d'exposition par phase : max((1-ε_phase), DF) × k_phase.
+        // Jamais le produit (1-ε)×DF qui comptait double l'exposition
+        // (ISO 15589-1 §7.3 / DNV-RP-B401 §5.3 / SP0169 defect factor).
+        const f_c_init_raw  = Math.max(1 - safeEinit,  safeDF) * safeKinit;
+        const f_c_moy_raw   = Math.max(1 - safeEmoy,   safeDF) * safeKmoy;
+        const f_c_final_raw = Math.max(1 - safeEfinal, safeDF) * safeKfinal;
         const f_c_init  = Math.min(f_c_init_raw,  1.0);
         const f_c_moy   = Math.min(f_c_moy_raw,   1.0);
         const f_c_final = Math.min(f_c_final_raw, 1.0);
@@ -3370,6 +3395,14 @@ const CalculationEngine = (function() {
         _getMemoCacheSize: function() { return _memoCache.size; }
     };
 })();
+
+// ═══ Exports utilitaires (TESTS NODE + compat) ═══════════════
+// « Utils » (calculateICCPAnodeLife, safeNumber…) est un global lexical
+// en navigateur (const en top-level d'un script classique), donc
+// INVISIBLE pour require() en Node. On l'expose comme propriété
+// additive de CalculationEngine : aucun impact sur le comportement
+// navigateur, les tests peuvent require() puis CalculationEngine.Utils.
+CalculationEngine.Utils = Utils;
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = CalculationEngine;
