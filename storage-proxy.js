@@ -639,6 +639,101 @@
         _conflictedProjects = new Set();
     }
 
+    // ============================================================
+    // 2bis. TOMBSTONES DE PROJETS SUPPRIMÉS (anti-résurrection)
+    // ------------------------------------------------------------
+    // BUG-CP-RESURRECTION (audit : PROJECT_CREATE_VIA_PUT après
+    // PROJECT_DELETE) : après une suppression Studio, un chemin
+    // automatique (pushProjectsToBackend toutes les 60 s, sync
+    // équipements, pull) pouvait RÉ-CRÉER le projet supprimé via
+    // l'UPSERT du backend (PUT /api/projects/<id> crée si absent).
+    // Le projet « zombie » réapparaissait alors dans le Dashboard.
+    //
+    // Un projet supprimé est donc marqué (7 jours, persisté en
+    // localStorage) et toute écriture backend automatique pour cet ID
+    // est bloquée. Une sauvegarde EXPLICITE de premier plan (nouvelle
+    // création réutilisant l'ID, ré-indexation) retire le marqueur.
+    // Un drapeau « pending » rejoue la suppression serveur si elle a
+    // échoué (hors ligne) au prochain passage du push.
+    // ============================================================
+    const DELETED_PROJECT_TTL = 7 * 24 * 60 * 60 * 1000;
+    let _deletedProjects = new Map();
+    try {
+        const savedDeleted = JSON.parse(localStorage.getItem('cp_deleted_projects') || '{}');
+        for (const [delId, delEntry] of Object.entries(savedDeleted)) {
+            if (delEntry && typeof delEntry.ts === 'number' &&
+                (Date.now() - delEntry.ts) < DELETED_PROJECT_TTL) {
+                _deletedProjects.set(delId, { ts: delEntry.ts, pending: delEntry.pending === true });
+            }
+        }
+    } catch (e) {}
+
+    function _persistDeletedProjects() {
+        try {
+            const obj = {};
+            for (const [delId, delEntry] of _deletedProjects) obj[delId] = delEntry;
+            localStorage.setItem('cp_deleted_projects', JSON.stringify(obj));
+        } catch (e) {}
+    }
+
+    /** Marque un projet comme supprimé (pending = suppression serveur à rejouer). */
+    function tombstoneProject(projectId, pending) {
+        if (!projectId) return;
+        _deletedProjects.set(projectId, { ts: Date.now(), pending: pending !== false });
+        _persistDeletedProjects();
+        // Purge les traces qui pourraient déclencher une re-pousse.
+        try {
+            const pushed = _getPushedMap();
+            if (pushed[projectId]) {
+                delete pushed[projectId];
+                _setPushedMap(pushed);
+            }
+        } catch (e) {}
+        try {
+            const last = JSON.parse(localStorage.getItem('cp_last_project') || 'null');
+            if (last && last.id === projectId) localStorage.removeItem('cp_last_project');
+        } catch (e) {}
+        try {
+            if (localStorage.getItem('lastProjectId') === projectId) {
+                localStorage.removeItem('lastProjectId');
+            }
+        } catch (e) {}
+    }
+
+    /** Lève le marqueur (re-création explicite du même ID). */
+    function clearProjectTombstone(projectId) {
+        if (!projectId) return;
+        if (_deletedProjects.delete(projectId)) _persistDeletedProjects();
+    }
+
+    function isProjectTombstoned(projectId) {
+        const entry = projectId && _deletedProjects.get(projectId);
+        if (!entry) return false;
+        if ((Date.now() - entry.ts) > DELETED_PROJECT_TTL) {
+            _deletedProjects.delete(projectId);
+            _persistDeletedProjects();
+            return false;
+        }
+        return true;
+    }
+
+    function pendingProjectDeletions() {
+        const ids = [];
+        for (const [delId, delEntry] of _deletedProjects) {
+            if (delEntry.pending) ids.push(delId);
+        }
+        return ids;
+    }
+
+    /** La suppression serveur a été confirmée (200/404) : plus de rejeu. */
+    function markProjectDeletionSettled(projectId) {
+        const entry = _deletedProjects.get(projectId);
+        if (entry && entry.pending) {
+            entry.pending = false;
+            _persistDeletedProjects();
+        }
+    }
+
     function withProjectVersion(projectId, options = {}) {
         const headers = Object.assign({}, options.headers || {});
         const version = _projectVersions.get(projectId);
@@ -793,8 +888,10 @@
         }));
         // Le backend est revenu : on tire les projets serveur ET on pousse
         // les projets locaux qui n'y sont pas encore (récupère une désync).
-        syncPendingChanges();
-        pushProjectsToBackend({ silent: true });
+        // Chaîné APRÈS syncPendingChanges : les deux partagent le verrou
+        // isInternalSave(), les lancer en parallèle ferait échouer le push
+        // (et donc le rejeu des suppressions pending) silencieusement.
+        syncPendingChanges().finally(() => pushProjectsToBackend({ silent: true }));
     }
 
     if (!IS_FILE_CONTEXT) {
@@ -878,6 +975,11 @@
         if (!isAuthenticated()) {
             throw new Error('Non authentifié');
         }
+        // Anti-résurrection : ne jamais (ré-)créer un équipement d'un
+        // projet que l'utilisateur a supprimé.
+        if (isProjectTombstoned(equipment.projectId)) {
+            return false;
+        }
 
         // ─────────────────────────────────────────────────────────
         // FIX 404 : le endpoint GET /api/equipments/<id> n'existe PAS
@@ -936,7 +1038,11 @@
         try {
             const localPromise = originalSaveEquipment.call(this, equipment);
 
-            if (!wasInSave && _isBackendAvailable && isAuthenticated()) {
+            // Anti-résurrection : pas de POST/PUT serveur pour un
+            // équipement appartenant à un projet supprimé (objets
+            // périmés encore détenus par l'UI/GIS/history).
+            if (!wasInSave && _isBackendAvailable && isAuthenticated() &&
+                !isProjectTombstoned(equipment.projectId)) {
                 try {
                     let response = await fetchWithRetry(`${API_BASE_URL}/equipments`, withProjectVersion(equipment.projectId, {
                         method: 'POST',
@@ -1054,15 +1160,18 @@
     // Dashboard (/api/dashboard/summary) continuait d'afficher le
     // projet supprimé.
     //
-    // On appelle ici DELETE /api/projects/<id> (suppression CASCADE
-    // des équipements via FK) avec l'If-Match de version exigé par le
-    // backend, puis on exécute la cascade locale d'origine.
+    // On marque d'abord le projet supprimé (tombstone : bloque toute
+    // écriture backend automatique), on exécute la CASCADE LOCALE
+    // (le Studio reflète la suppression immédiatement, même hors
+    // ligne), puis on appelle DELETE /api/projects/<id> (cascade FK
+    // des équipements) avec l'If-Match de version exigé par le
+    // backend.
     //
     // • 404 côté backend  → projet déjà absent : on continue en local.
     // • 409/428 (version) → on tente un re-jeu avec la version serveur
     //                        (currentVersion) renvoyée par le backend.
-    // • Hors ligne / erreur→ on supprime quand même en local (le
-    //                        backend n'est pas bloqué), on journalise.
+    // • Hors ligne / erreur→ le drapeau « pending » du tombstone fait
+    //                        rejouer la suppression au prochain push.
     // ============================================================
     async function _deleteProjectBackendRecord(projectId) {
         if (!projectId || !_isBackendAvailable || !isAuthenticated()) return false;
@@ -1082,6 +1191,7 @@
                     }
                 } else if (probe.status === 404) {
                     // Déjà absent côté backend : rien à supprimer.
+                    markProjectDeletionSettled(projectId);
                     return true;
                 }
             } catch (e) {
@@ -1114,6 +1224,8 @@
                 try { localStorage.setItem('cp_sync_conflicts', JSON.stringify([..._conflictedProjects])); } catch (e) {}
                 _projectVersions.delete(projectId);
                 try { localStorage.setItem('cp_project_versions', JSON.stringify(Object.fromEntries(_projectVersions))); } catch (e) {}
+                // Suppression serveur confirmée : plus besoin de rejouer.
+                markProjectDeletionSettled(projectId);
                 return true;
             }
 
@@ -1135,11 +1247,17 @@
         StorageManager.deleteProjectCascade = async function(projectId) {
             if (!projectId) return originalDeleteProjectCascade.call(this, projectId);
 
-            // 1. Suppression côté backend (cascade FK des équipements).
-            await _deleteProjectBackendRecord(projectId);
+            // 1. Tombstone immédiat : bloque push/sync/autosave pendant
+            //    TOUTE la fenêtre de suppression (anti-résurrection).
+            tombstoneProject(projectId, true);
 
-            // 2. Cascade locale d'origine (toujours exécutée, même hors-ligne).
+            // 2. Cascade locale d'origine (immédiate, même hors-ligne).
             const result = await originalDeleteProjectCascade.call(this, projectId);
+
+            // 3. Suppression backend (cascade FK) — best effort ; si elle
+            //    échoue, le drapeau « pending » la rejouera au prochain
+            //    passage de pushProjectsToBackend.
+            await _deleteProjectBackendRecord(projectId);
 
             _emitDataSynced({
                 type: 'projectDeleted',
@@ -1157,6 +1275,7 @@
     if (typeof originalDeleteProjectRecord === 'function') {
         StorageManager.deleteProjectRecord = async function(projectId) {
             if (!projectId) return originalDeleteProjectRecord.call(this, projectId);
+            tombstoneProject(projectId, true);
             await _deleteProjectBackendRecord(projectId);
             return originalDeleteProjectRecord.call(this, projectId);
         };
@@ -1240,6 +1359,15 @@
         const wasInSave = isInternalSave();
         const saveToken = wasInSave ? _currentSaveToken : beginInternalSave();
 
+        // BUG-CP-RESURRECTION : une sauvegarde EXPLICITE de premier plan
+        // (nouvelle création réutilisant l'ID, ré-indexation, édition
+        // délibérée) lève le marqueur de suppression. Les sauvegardes
+        // internes (fenêtre de suppression, pull, sync) ne le lèvent pas
+        // et ne peuvent pas ré-créer un projet supprimé côté backend.
+        if (!wasInSave && project && project.id) {
+            clearProjectTombstone(project.id);
+        }
+
         try {
             const localPromise = originalSaveProject.call(this, project);
 
@@ -1258,6 +1386,7 @@
                 && _isBackendAvailable
                 && isAuthenticated()
                 && !recentlyExpired
+                && !isProjectTombstoned(project.id)
                 && !_conflictedProjects.has(project.id);
 
             if (canCallBackend) {
@@ -1514,6 +1643,9 @@
             let eqTotal = 0;
             for (const item of items) {
                 if (!item || !item.id) continue;
+                // Anti-résurrection : ne pas ré-importer localement un
+                // projet supprimé dans le Studio (copie serveur périmée).
+                if (isProjectTombstoned(item.id)) continue;
                 const detailRes = await fetchWithRetry(`${API_BASE_URL}/projects/${item.id}`,
                     { method: 'GET' }, RETRY_CONFIG.maxAttempts);
                 if (!detailRes.ok) continue;
@@ -1587,6 +1719,7 @@
     // Pousse les équipements embarqués d'un projet (data.equipments), en
     // respectant la version du projet (If-Match) comme le fait saveEquipment.
     async function _pushProjectEquipments(project) {
+        if (isProjectTombstoned(project.id)) return;
         const eqs = (project.data && Array.isArray(project.data.equipments)) ? project.data.equipments : [];
         if (eqs.length === 0) return;
         let version = _projectVersions.get(project.id);
@@ -1632,6 +1765,13 @@
         _pushInProgress = true;
         let pushed = 0;
         try {
+            // BUG-CP-RESURRECTION : rejouer d'ABORD les suppressions en
+            // attente (suppressions effectuées hors ligne). Aucune pousse
+            // ne doit ré-créer un projet que l'utilisateur a supprimé.
+            for (const deletedId of pendingProjectDeletions()) {
+                try { await _deleteProjectBackendRecord(deletedId); } catch (e) { /* re-tentative au prochain cycle */ }
+            }
+
             const localProjects = await StorageManager.loadProjects();
             if (!Array.isArray(localProjects) || localProjects.length === 0) return 0;
 
@@ -1650,6 +1790,10 @@
 
             for (const project of localProjects) {
                 if (!project || !project.id) continue;
+                // Anti-résurrection : un projet supprimé ne doit jamais
+                // être (ré-)créé par la pousse automatique, même s'il
+                // subsiste une copie locale fantôme.
+                if (isProjectTombstoned(project.id)) continue;
                 const fp = _projectFingerprint(project);
                 const already = pushedMap[project.id];
                 if (serverIds.has(project.id) && already && already.fp === fp) continue;
@@ -1721,6 +1865,10 @@
     StorageManager.checkBackend = checkBackend;
     StorageManager.pullProjectsFromBackend = pullProjectsFromBackend;
     StorageManager.pushProjectsToBackend = pushProjectsToBackend;
+
+    // Tombstones anti-résurrection (exposés pour tests et debug).
+    StorageManager.isProjectTombstoned = isProjectTombstoned;
+    StorageManager.getPendingProjectDeletions = pendingProjectDeletions;
 
     StorageManager.getLastSyncTimestamp = function() {
         return _lastSyncTimestamp;

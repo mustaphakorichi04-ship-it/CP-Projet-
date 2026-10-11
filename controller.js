@@ -1837,8 +1837,17 @@ const ProjectManager = (function() {
     // ============================================================
     async function deleteCurrentProject() {
         if (!currentProjectId) return;
+        const projectId = currentProjectId;
+
+        // BUG-CP-RESURRECTION : on détache le projet courant AVANT toute
+        // opération async. Sinon, l'intervalle saveCurrentProject() peut
+        // ré-écrire (PUT upsert) le projet pendant la fenêtre de
+        // suppression et le faire réapparaître côté serveur / Dashboard.
+        currentProjectId = null;
+
         try {
-            await StorageManager.deleteProjectCascade(currentProjectId);
+            await StorageManager.deleteProjectCascade(projectId);
+
             state.dashboard.systeme = [];
             state.systems = [];
             state.equipments = [];
@@ -1846,7 +1855,6 @@ const ProjectManager = (function() {
             state.mapPoints = [];
             state.groundbeds = [];
             state.history = [];
-            currentProjectId = null;
             _lastProjectId = null;
             _lastEquipments = null;
             _equipmentsLoaded = false;
@@ -1854,6 +1862,9 @@ const ProjectManager = (function() {
             invalidateSurfaceCache();
             invalidateSystemCurrentCache();
         } catch (err) {
+            // Échec local (le projet existe toujours) : restaure l'ID
+            // courant pour que l'utilisateur puisse réessayer.
+            currentProjectId = projectId;
             console.error('Erreur deleteCurrentProject:', err);
             throw err;
         }

@@ -4,11 +4,17 @@
 // Régression SUPPRESSION PROJET Studio → Backend :
 // charge le VRAI storage-proxy.js dans jsdom et vérifie que
 // StorageManager.deleteProjectCascade / deleteProjectRecord
-// appellent bien DELETE /api/projects/<id> (résolution de la
-// version serveur + If-Match, re-jeu sur conflit 409/428,
-// 404 gracieux) PUIS exécutent la cascade locale d'origine.
+// exécutent la CASCADE LOCALE puis appellent DELETE /api/projects/<id>
+// (résolution de la version serveur + If-Match, re-jeu sur conflit
+// 409/428, 404 gracieux).
 // Sans ce proxy, un projet supprimé dans le Studio restait dans
 // SQLite et réapparaissait dans /api/dashboard/summary.
+//
+// Anti-résurrection (BUG-CP-RESURRECTION) : vérifie aussi qu'aucun
+// chemin automatique (push 60 s, sync équipements) ne RÉ-CRÉE un
+// projet supprimé (audit réel : PROJECT_CREATE_VIA_PUT après
+// PROJECT_DELETE), que la suppression hors ligne est rejouée, et
+// qu'une re-création explicite lève le marqueur.
 // ============================================================
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -47,6 +53,10 @@ win.localStorage.setItem('cp_auth_token', JSON.stringify({
 const fetchCalls = [];
 const deleteScripts = new Map(); // projectId → file de {status, body}
 const probeVersions = new Map(); // projectId → {status, body} du GET probe
+let versionReachable = true;     // false = /api/version échoue (backend coupé)
+const cascadeOps = [];           // ordre réel : suppressions locales
+const deleteOps = [];            // ordre réel : DELETE serveur
+let staleProjects = [];          // store local simulé (loadProjects)
 
 function makeResponse(body, status = 200) {
     return {
@@ -68,6 +78,7 @@ win.fetch = async (url, options = {}) => {
     });
 
     if (String(url).includes('/api/version')) {
+        if (!versionReachable) throw new TypeError('Failed to fetch');
         return makeResponse({ useHttpOnlyCookie: false, version: 'test' });
     }
     const projectMatch = String(url).match(/\/api\/projects\/([^/]+)$/);
@@ -77,6 +88,7 @@ win.fetch = async (url, options = {}) => {
                      : makeResponse({ id: projectMatch[1], version: 1 });
     }
     if (projectMatch && method === 'DELETE') {
+        deleteOps.push({ id: projectMatch[1], fetchIndex: fetchCalls.length - 1 });
         const script = deleteScripts.get(projectMatch[1]) || [];
         const next = script.shift() || { status: 200, body: { success: true } };
         return makeResponse(next.body, next.status);
@@ -87,8 +99,16 @@ win.fetch = async (url, options = {}) => {
 // ── Stubs applicatifs (cascade/record LOCAUX = comportement d'origine) ──
 const localCalls = { cascade: [], record: [] };
 win.StorageManager = {
-    deleteProjectCascade: async (id) => { localCalls.cascade.push(id); return true; },
-    deleteProjectRecord: async (id) => { localCalls.record.push(id); return true; }
+    deleteProjectCascade: async (id) => {
+        localCalls.cascade.push(id);
+        cascadeOps.push({ id, fetchIndex: fetchCalls.length });
+        return true;
+    },
+    deleteProjectRecord: async (id) => { localCalls.record.push(id); return true; },
+    loadProjects: async () => staleProjects.slice(),
+    loadEquipmentsForProject: async () => [],
+    saveProject: async (project) => project,
+    saveEquipment: async (eq) => eq
 };
 win.ProjectManager = {
     getCurrentProjectId: () => 'PROJ-CURRENT',
@@ -116,8 +136,12 @@ test('deleteProjectCascade : probe version → DELETE If-Match → cascade local
     assert.strictEqual(dels.length, 1, 'DELETE non émis');
     assert.strictEqual(dels[0].headers['If-Match'], '3', 'If-Match incorrect');
 
-    // 3. Cascade LOCALE d'origine exécutée (après la suppression serveur).
+    // 3. Cascade LOCALE exécutée EN PREMIER, avant le DELETE serveur.
     assert.deepStrictEqual(localCalls.cascade, ['PROJ-DEL-1'], 'cascade locale non appelée');
+    const cascadeOp = cascadeOps.find(o => o.id === 'PROJ-DEL-1');
+    const deleteOp = deleteOps.find(o => o.id === 'PROJ-DEL-1');
+    assert.ok(cascadeOp && deleteOp && cascadeOp.fetchIndex <= deleteOp.fetchIndex,
+        'la cascade locale doit précéder le DELETE serveur');
 
     // 4. État de version/conflit nettoyé après suppression.
     const versions = JSON.parse(win.localStorage.getItem('cp_project_versions') || '{}');
@@ -176,6 +200,84 @@ test('deleteProjectRecord (re-key) : suppression serveur best-effort de l ancien
     assert.strictEqual(dels.length, 1, 'DELETE serveur absent pour l ancien ID');
     assert.strictEqual(dels[0].headers['If-Match'], '2');
     assert.deepStrictEqual(localCalls.record, ['PROJ-OLD'], 'suppression locale non appelée');
+});
+
+// ============================================================
+// BUG-CP-RESURRECTION : les chemins automatiques ne doivent
+// JAMAIS ré-créer un projet supprimé (PROJECT_CREATE_VIA_PUT).
+// ============================================================
+test('pushProjectsToBackend ignore un projet supprimé resté dans le store local', async () => {
+    await win.StorageManager.checkBackend();
+
+    probeVersions.set('PROJ-ZOMBIE', { status: 200, body: { id: 'PROJ-ZOMBIE', version: 2 } });
+    await win.StorageManager.deleteProjectCascade('PROJ-ZOMBIE');
+    assert.ok(win.StorageManager.isProjectTombstoned('PROJ-ZOMBIE'),
+        'tombstone absent après suppression');
+
+    // Store local « fantôme » : le push revoit encore le projet supprimé
+    // (cas réel : copie locale résiduelle → PUT upsert → résurrection).
+    staleProjects.push({ id: 'PROJ-ZOMBIE', name: 'Zombie', data: { n: 1 } });
+
+    const pushed = await win.StorageManager.pushProjectsToBackend({ silent: true });
+
+    const puts = fetchCalls.filter(
+        c => c.method === 'PUT' && c.url.endsWith('/api/projects/PROJ-ZOMBIE'));
+    assert.strictEqual(puts.length, 0, 'résurrection : PUT émis pour le projet supprimé');
+    assert.strictEqual(pushed, 0, 'le push ne doit compter aucun projet');
+
+    staleProjects.length = 0;
+});
+
+test('saveEquipment : aucun POST serveur pour un projet supprimé', async () => {
+    const before = fetchCalls.filter(
+        c => c.method === 'POST' && c.url.includes('/api/equipments')).length;
+
+    await win.StorageManager.saveEquipment({ id: 'eq-zombie', projectId: 'PROJ-ZOMBIE', tag: 'Z' });
+
+    const after = fetchCalls.filter(
+        c => c.method === 'POST' && c.url.includes('/api/equipments')).length;
+    assert.strictEqual(after, before, 'POST équipement émis pour un projet supprimé');
+});
+
+test('suppression hors ligne → DELETE rejoué au retour du backend (pending)', async () => {
+    versionReachable = false;
+    await win.StorageManager.checkBackend();
+
+    await win.StorageManager.deleteProjectCascade('PROJ-OFFLINE');
+    assert.strictEqual(deletionsFor('PROJ-OFFLINE').length, 0,
+        'DELETE émis alors que le backend est coupé');
+    assert.ok(win.StorageManager.isProjectTombstoned('PROJ-OFFLINE'), 'tombstone absent');
+    assert.ok(win.StorageManager.getPendingProjectDeletions().includes('PROJ-OFFLINE'),
+        'drapeau pending non enregistré');
+
+    versionReachable = true;
+    await win.StorageManager.checkBackend();
+    await win.StorageManager.pushProjectsToBackend({ silent: true });
+
+    // Le rejeu peut aussi être lancé par l'événement backendAvailable
+    // (push asynchrone) : on attend que le DELETE parte.
+    const start = Date.now();
+    while (deletionsFor('PROJ-OFFLINE').length === 0 && (Date.now() - start) < 3000) {
+        await new Promise(r => setTimeout(r, 50));
+    }
+
+    assert.ok(deletionsFor('PROJ-OFFLINE').length >= 1, 'DELETE non rejoué après retour backend');
+    assert.ok(!win.StorageManager.getPendingProjectDeletions().includes('PROJ-OFFLINE'),
+        'drapeau pending non purgé après rejeu');
+});
+
+test('re-création explicite du même ID lève le marqueur et synchronise', async () => {
+    await win.StorageManager.checkBackend();
+
+    await win.StorageManager.saveProject({
+        id: 'PROJ-OFFLINE', name: 'reborn', type: 'mixte', data: { reborn: true }
+    });
+
+    assert.ok(!win.StorageManager.isProjectTombstoned('PROJ-OFFLINE'),
+        'marqueur non levé à la re-création explicite');
+    const puts = fetchCalls.filter(
+        c => c.method === 'PUT' && c.url.endsWith('/api/projects/PROJ-OFFLINE'));
+    assert.ok(puts.length >= 1, 'PUT de re-création absent');
 });
 
 test('aucune erreur jsdom non gérée pendant la session', () => {

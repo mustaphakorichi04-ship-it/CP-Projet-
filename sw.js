@@ -4,7 +4,7 @@
 // v9.10 — Network-First pour HTML et invalidation des anciens assets
 // ============================================================
 
-const CACHE_VERSION = 'cp-engineer-v9.24-cache';
+const CACHE_VERSION = 'cp-engineer-v9.25-cache';
 
 
 
@@ -17,10 +17,10 @@ const STATIC_ASSETS = [
   './engine.js?v=20261009-3',
   './ui.js?v=20261011-1',
   './app.js?v=20261002-2',
-  './controller.js?v=20261011-1',
+  './controller.js?v=20261011-3',
   './cp-controller.js?v=20261009-3',
   './storage.js?v=20261011-2',
-  './storage-proxy.js?v=20261011-2',
+  './storage-proxy.js?v=20261011-3',
   './manifest.json',
   './acCorrosionEngine.js',
   './cableLengthEngine.js',
