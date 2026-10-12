@@ -280,6 +280,25 @@
         } catch (e) {
             console.warn('[Proxy] Erreur lecture token:', e);
         }
+
+        // ─── SYNC STUDIO↔DASHBOARD (BUG-CP-STUDIO-AUTH) ───
+        // login.html stocke le JWT sous `cp_token` (chaîne brute) et le
+        // Dashboard lit déjà `cp_token || cp_auth_token` (dashboard.html).
+        // Le Studio ne lisait QUE `cp_auth_token` → isAuthenticated()=false →
+        // pushProjectsToBackend() faisait `return 0` : les projets créés
+        // dans le Studio (ex. PROJ-004/005) ne remontaient JAMAIS au
+        // Dashboard. On accepte donc `cp_token` en repli, de façon symétrique
+        // au Dashboard. Aucun autre comportement n'est modifié.
+        try {
+            const rawToken = localStorage.getItem('cp_token');
+            if (rawToken && rawToken !== 'cookie') {
+                _authToken = rawToken;
+                return _authToken;
+            }
+        } catch (e) {
+            console.warn('[Proxy] Erreur lecture cp_token:', e);
+        }
+
         return null;
     }
 
@@ -373,6 +392,16 @@
 
         try {
             localStorage.removeItem('cp_auth_token');
+        } catch (e) {}
+
+        // ─── SYNC STUDIO↔DASHBOARD (BUG-CP-STUDIO-AUTH) ───
+        // getToken() accepte `cp_token` (posé par login.html) en repli.
+        // clearToken() doit donc le retirer AUSSI, sinon un jeton obsolète
+        // (session révoquée côté backend → 401) serait ressuscité par
+        // getToken() à chaque requête → boucle 401 infinie au lieu d'une
+        // redirection propre vers /login. Symétrie stricte get/set/clear.
+        try {
+            localStorage.removeItem('cp_token');
         } catch (e) {}
 
         document.dispatchEvent(new CustomEvent('authLoggedOut'));
@@ -758,7 +787,51 @@
     }
 
     function isProjectVersionFailure(response) {
-        return response.status === 409 || response.status === 428;
+        return response && (response.status === 409 || response.status === 428);
+    }
+
+    /** Lève la suspension de sync pour un projet (conflit résolu). */
+    function clearProjectConflict(projectId) {
+        if (!projectId) return;
+        if (_conflictedProjects.delete(projectId)) {
+            try { localStorage.setItem('cp_sync_conflicts', JSON.stringify([..._conflictedProjects])); } catch (e) {}
+        }
+    }
+
+    /**
+     * SYNC-BIDIR : re-joue UNE FOIS une écriture projet après conflit de
+     * version (409/428) avec la version serveur fraîche, au lieu de
+     * suspendre définitivement la synchronisation du projet.
+     * Cause racine : `recordProjectConflict` gelait le projet dans
+     * `_conflictedProjects` pour toujours ; toute sync ultérieure
+     * (saveProject, push, fullSync, syncPendingChanges) était bloquée
+     * et le Dashboard ne recevait plus jamais les modifications — sans
+     * qu'aucune UI ne permette de résoudre le conflit.
+     * @param {Response} response réponse 409/428 initiale (clonable).
+     * @param {string} projectId identifiant projet.
+     * @param {function(string): Promise<Response>} redo fabrique qui rejoue
+     *        la requête avec la version fournie (header If-Match).
+     * @returns {Promise<{response: Response, recovered: boolean}>}
+     *          `recovered=true` si le re-jeu a abouti (conflit levé).
+     */
+    async function _retryProjectWriteOnce(response, projectId, redo) {
+        let serverVersion = null;
+        try { serverVersion = (await response.clone().json()).currentVersion; } catch (e) {}
+        if (Number.isInteger(serverVersion) && serverVersion >= 1 && typeof redo === 'function') {
+            rememberProjectVersionValue(projectId, serverVersion);
+            try {
+                const retry = await redo(String(serverVersion));
+                if (retry && retry.ok) {
+                    await rememberProjectVersion(retry, projectId);
+                    clearProjectConflict(projectId);
+                    return { response: retry, recovered: true };
+                }
+                return { response: retry || response, recovered: false };
+            } catch (e) {
+                return { response, recovered: false };
+            }
+        }
+        return { response, recovered: false };
     }
 
     async function recordProjectConflict(response, projectId) {
@@ -1371,6 +1444,12 @@
         try {
             const localPromise = originalSaveProject.call(this, project);
 
+            // SWR : l'écriture locale reste la source de vérité du Studio
+            // même quand l'écriture serveur est différée (projet en
+            // conflit de version, voir recordProjectConflict). Les
+            // métadonnées de push/version sont invalidées pour forcer une
+            // re-tentative au prochain cycle, une fois le conflit résolu.
+
              // ─────────────────────────────────────────────────────────
             // FIX 401 : garde-fou supplémentaire.
             // ---------------------------------------------------------
@@ -1394,11 +1473,13 @@
                     // ───────────────────────────────────────────────────
                     // FIX 404 : en cas de 404 sur PUT, basculer sur POST
                     // ───────────────────────────────────────────────────
-                    let response = await fetchWithRetry(`${API_BASE_URL}/projects/${project.id}`, withProjectVersion(project.id, {
+                    const putProject = (versionHeader) => fetchWithRetry(`${API_BASE_URL}/projects/${project.id}`, {
                         method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: Object.assign({ 'Content-Type': 'application/json' },
+                            versionHeader !== undefined ? { 'If-Match': versionHeader } : (withProjectVersion(project.id, {}).headers || {})),
                         body: JSON.stringify(project.data)
-                    }), RETRY_CONFIG.maxAttempts);
+                    }, RETRY_CONFIG.maxAttempts);
+                    let response = await putProject();
 
                     if (response.status === 404) {
                         // Fallback : créer le projet côté backend
@@ -1415,23 +1496,27 @@
                         }, RETRY_CONFIG.maxAttempts);
                         if (createResponse.ok) {
                             await rememberProjectVersion(createResponse, project.id);
+                            clearProjectConflict(project.id);
                             response = createResponse;
                         } else if (createResponse.status === 409) {
-                            response = await fetchWithRetry(`${API_BASE_URL}/projects/${project.id}`, withProjectVersion(project.id, {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(project.data)
-                            }), RETRY_CONFIG.maxAttempts);
+                            response = await putProject();
                         }
                     }
 
                     if (isProjectVersionFailure(response)) {
-                        await recordProjectConflict(response, project.id);
+                        // SYNC-BIDIR : re-jeu unique avec la version serveur
+                        // fraîche avant de suspendre la sync du projet.
+                        const retry = await _retryProjectWriteOnce(response, project.id, (v) => putProject(v));
+                        response = retry.response;
+                        if (!retry.recovered) {
+                            await recordProjectConflict(response, project.id);
+                        }
                     } else if (!response.ok) {
                         const text = await response.text();
                         console.warn('[Proxy] Erreur sauvegarde projet backend:', response.status, text);
                     } else {
                         await rememberProjectVersion(response, project.id);
+                        clearProjectConflict(project.id);
                         _lastSyncTimestamp = Date.now();
                     }
                 } catch (e) {
@@ -1637,10 +1722,65 @@
             if (!listRes.ok) return false;
             const list = await listRes.json();
             const items = (list && Array.isArray(list.items)) ? list.items : [];
-            if (items.length === 0) return false;
+            // SYNC BIDIRECTIONNELLE : une liste serveur VIDE (mais fiable :
+            // GET 200 après auth) signifie que TOUS les projets ont été
+            // supprimés ailleurs → on continue la réconciliation au lieu de
+            // sortir (ancien `return false` qui bloquait tout).
 
             let projectsCount = 0;
             let eqTotal = 0;
+            // SYNC BIDIRECTIONNELLE (serveur → Studio) : réconcilie les
+            // suppressions externes. Tout projet LOCAL déjà poussé mais
+            // absent de la liste serveur (et non marqué supprimé) est une
+            // suppression effectuée ailleurs : on le retire du store local
+            // (suppression locale seule : aucun DELETE serveur à rejouer,
+            // le serveur l'a déjà oublié).
+            const serverIdSet = new Set();
+            for (const item of items) { if (item && item.id) serverIdSet.add(item.id); }
+            let reconciledDeletions = 0;
+            try {
+                const pushedMap = _getPushedMap();
+                const localProjects = await StorageManager.loadProjects();
+                if (Array.isArray(localProjects)) {
+                    for (const lp of localProjects) {
+                        if (!lp || !lp.id) continue;
+                        if (serverIdSet.has(lp.id)) continue;
+                        if (isProjectTombstoned(lp.id)) continue;
+                        // Seulement les projets déjà connus du serveur :
+                        // un projet purement local (jamais poussé) est une
+                        // création en attente, PAS une suppression externe.
+                        // NOTE : en cas de RÉINITIALISATION COMPLÈTE du serveur
+                        // (liste vide fiable), même les projets poussés encore
+                        // présents localement doivent être re-poussés (le
+                        // serveur a tout oublié) : la suppression locale est
+                        // donc limitée au cas où le serveur garde ≥ 1 projet.
+                        if (!pushedMap[lp.id]) continue;
+                        if (serverIdSet.size === 0) continue;
+                        try {
+                            // Suppression LOCALE SEULE (pas de DELETE serveur :
+                            // le serveur a DÉJÀ oublié ce projet ; la méthode
+                            // wrappée re-émettrait un DELETE inutile). On pose
+                            // un tombstone non-pending pour empêcher le push
+                            // de le ressusciter. `originalDeleteProjectCascade`
+                            // (déclaré section 6bis, avant cette fonction) est
+                            // la cascade locale NON wrappée.
+                            tombstoneProject(lp.id, false);
+                            if (typeof originalDeleteProjectCascade === 'function') {
+                                await originalDeleteProjectCascade.call(StorageManager, lp.id);
+                            } else {
+                                tombstoneProject(lp.id, true);
+                                continue;
+                            }
+                            delete pushedMap[lp.id];
+                            reconciledDeletions++;
+                            console.info('[Proxy] Suppression externe réconciliée localement:', lp.id);
+                        } catch (e) {
+                            console.warn('[Proxy] Réconciliation suppression échouée:', lp.id, e && e.message);
+                        }
+                    }
+                    if (reconciledDeletions > 0) _setPushedMap(pushedMap);
+                }
+            } catch (e) { /* best-effort */ }
             for (const item of items) {
                 if (!item || !item.id) continue;
                 // Anti-résurrection : ne pas ré-importer localement un
@@ -1708,19 +1848,95 @@
     function _setPushedMap(map) {
         try { localStorage.setItem('cp_pushed_projects', JSON.stringify(map)); } catch (e) {}
     }
-    // Empreinte simple d'un projet pour détecter un changement sans repousser à l'identique.
+    // Empreinte d'un projet pour détecter un changement sans repousser à
+    // l'identique. Couvre le blob data (dimensionné) + le nom/type
+    // canoniques : un renommage ne modifie PAS forcément `data.project`
+    // (le nom peut vivre en racine), et sans eux le push sautait le PUT
+    // → le Dashboard gardait l'ancien nom (colonnes SQL non sync).
     function _projectFingerprint(project) {
         try {
-            const s = JSON.stringify(project.data || {});
-            return s.length + ':' + (s.slice(0, 64)) + ':' + (s.slice(-64));
+            const d = project.data || {};
+            const s = JSON.stringify(d);
+            const name = (d && d.project && d.project.name) || d.name || project.name || '';
+            const type = (d && d.project && d.project.cpSystemType) || d.type || project.type || '';
+            return s.length + ':' + name + ':' + type + ':' + (s.slice(0, 64)) + ':' + (s.slice(-64));
         } catch (e) { return String(Date.now()); }
+    }
+
+    /**
+     * Récupération douce après un conflit de version (409/428).
+     * CAUSE RACINE : après recordProjectConflict(), le projet restait dans
+     * `_conflictedProjects` AD VITAM (aucun code ne l'en retirait sauf un
+     * DELETE réussi). Toute sync ultérieure (saveProject, fullSync, push)
+     * était alors bloquée "silencieusement" → les modifications du Studio
+     * ne montaient plus jamais au Dashboard.
+     * Ici : on relit la version serveur courante (GET, sans If-Match) et,
+     * si elle existe, on reprend la sync (le PUT suivant embarque les
+     * données locales les plus récentes). 404 → rien à récupérer.
+     * @returns {Promise<boolean>} true si le conflit est levé.
+     */
+    async function _recoverProjectConflict(projectId) {
+        if (!projectId || !_conflictedProjects.has(projectId)) return true;
+        if (!_isBackendAvailable || !isAuthenticated()) return false;
+        try {
+            const probe = await fetchWithRetry(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}`, {
+                method: 'GET'
+            }, RETRY_CONFIG.maxAttempts);
+            if (!probe.ok) {
+                if (probe.status === 404) {
+                    _conflictedProjects.delete(projectId);
+                    try { localStorage.setItem('cp_sync_conflicts', JSON.stringify([..._conflictedProjects])); } catch (e) {}
+                    return true;
+                }
+                return false;
+            }
+            const body = await probe.json();
+            if (Number.isInteger(body.version)) {
+                rememberProjectVersionValue(projectId, body.version);
+                _conflictedProjects.delete(projectId);
+                try { localStorage.setItem('cp_sync_conflicts', JSON.stringify([..._conflictedProjects])); } catch (e) {}
+                console.info('[Proxy] Conflit résolu pour', projectId, '— reprise de la sync (v' + body.version + ').');
+                if (window.UI && typeof window.UI.showToast === 'function') {
+                    window.UI.showToast(`🔄 Synchronisation reprise pour ${projectId}.`, 'info');
+                }
+                return true;
+            }
+        } catch (e) {
+            console.warn('[Proxy] Récupération conflit échouée pour', projectId, e && e.message);
+        }
+        return false;
     }
 
     // Pousse les équipements embarqués d'un projet (data.equipments), en
     // respectant la version du projet (If-Match) comme le fait saveEquipment.
+    // SYNC BIDIRECTIONNELLE : supprime aussi côté serveur les équipements
+    // retirés localement (sinon un équipement supprimé dans le Studio
+    // restait dans SQLite et faussait les KPI du Dashboard).
     async function _pushProjectEquipments(project) {
         if (isProjectTombstoned(project.id)) return;
         const eqs = (project.data && Array.isArray(project.data.equipments)) ? project.data.equipments : [];
+        const localIds = new Set();
+        for (const eq of eqs) { if (eq && eq.id) localIds.add(eq.id); }
+        // Diff serveurs vs local : ce qui n'est plus local doit être supprimé.
+        try {
+            const listRes = await fetchWithRetry(
+                `${API_BASE_URL}/projects/${encodeURIComponent(project.id)}/equipments?limit=500`,
+                { method: 'GET' }, 1);
+            if (listRes && listRes.ok) {
+                const listData = await listRes.json();
+                const serverItems = (listData && Array.isArray(listData.items)) ? listData.items : [];
+                for (const sEq of serverItems) {
+                    if (!sEq || !sEq.id || localIds.has(sEq.id)) continue;
+                    if (isProjectTombstoned(project.id)) return;
+                    try {
+                        await fetchWithRetry(`${API_BASE_URL}/equipments/${encodeURIComponent(sEq.id)}`,
+                            withProjectVersion(project.id, { method: 'DELETE' }), 1);
+                    } catch (e) {
+                        console.warn('[Proxy] Suppression équipement serveur échouée:', sEq.id, e && e.message);
+                    }
+                }
+            }
+        } catch (e) { /* best-effort : la pousse des équipements suit quand même */ }
         if (eqs.length === 0) return;
         let version = _projectVersions.get(project.id);
         for (const eq of eqs) {
@@ -1777,16 +1993,73 @@
 
             // IDs déjà connus du serveur (une seule requête)
             let serverIds = new Set();
+            let serverListOk = false;
+            let serverListCount = 0;
             try {
                 const listRes = await fetchWithRetry(`${API_BASE_URL}/projects?limit=200`,
                     { method: 'GET' }, RETRY_CONFIG.maxAttempts);
                 if (listRes.ok) {
                     const list = await listRes.json();
-                    (list.items || []).forEach(i => serverIds.add(i.id));
+                    const serverItems = (list && Array.isArray(list.items)) ? list.items : [];
+                    serverItems.forEach(i => { if (i && i.id) serverIds.add(i.id); });
+                    serverListCount = serverIds.size;
+                    serverListOk = true;
                 }
             } catch (e) { /* le PUT décidera */ }
 
             const pushedMap = _getPushedMap();
+
+            // ─────────────────────────────────────────────────────────
+            // SYNC-BIDIRECTIONNELLE (sens serveur → Studio) :
+            // un projet DÉJÀ poussé (= connu du serveur) mais ABSENT de
+            // la liste serveur a été supprimé ailleurs (autre navigateur,
+            // API directe, outil de récupération). On le supprime en local
+            // (cascade locale, tombstone non-pending pour bloquer le push
+            // qui suit) au lieu de le ressusciter par PUT-upsert.
+            // Garde-fous : liste serveur fiable (GET 200) + projet non
+            // tombstoné + hors conflit. La map `cp_pushed_projects` prouve
+            // la connaissance serveur préalable (pas de suppression d'un
+            // brouillon jamais synchronisé). Comme côté pull, on ne supprime
+            // en local que si le serveur garde ≥ 1 projet : une
+            // réinitialisation complète (liste vide) doit RE-POUSSER les
+            // projets locaux, pas les effacer.
+            // ─────────────────────────────────────────────────────────
+            if (serverListOk && serverListCount > 0) {
+                for (const project of localProjects) {
+                    if (!project || !project.id) continue;
+                    if (serverIds.has(project.id)) continue;
+                    if (!pushedMap[project.id]) continue;
+                    if (isProjectTombstoned(project.id)) continue;
+                    if (_conflictedProjects.has(project.id)) continue;
+                    try {
+                        tombstoneProject(project.id, false);
+                        if (typeof originalDeleteProjectCascade === 'function') {
+                            await originalDeleteProjectCascade.call(StorageManager, project.id);
+                        } else if (typeof StorageManager.deleteProjectCascade === 'function') {
+                            await StorageManager.deleteProjectCascade(project.id);
+                        } else {
+                            tombstoneProject(project.id, true);
+                            continue;
+                        }
+                        console.info('[Proxy] Sync serveur→Studio : projet supprimé ailleurs retiré en local :', project.id);
+                        document.dispatchEvent(new CustomEvent('projectDeletedRemotely', {
+                            detail: { id: project.id }
+                        }));
+                        // Le cache mémoire du contrôleur (projectsList) doit
+                        // suivre : sinon le sélecteur du Studio continue
+                        // d'afficher le projet supprimé jusqu'au rechargement.
+                        try {
+                            const PM = (typeof ProjectManager !== 'undefined' && ProjectManager)
+                                || (window.ProjectManager) || null;
+                            if (PM && typeof PM.loadProjectsList === 'function') {
+                                await PM.loadProjectsList();
+                            }
+                        } catch (e) { /* le prochain chargement la verra */ }
+                    } catch (e) {
+                        console.warn('[Proxy] Réconciliation suppression distante échouée:', project.id, e && e.message);
+                    }
+                }
+            }
 
             for (const project of localProjects) {
                 if (!project || !project.id) continue;
@@ -1794,6 +2067,13 @@
                 // être (ré-)créé par la pousse automatique, même s'il
                 // subsiste une copie locale fantôme.
                 if (isProjectTombstoned(project.id)) continue;
+                // Conflit 409/428 antérieur : tente une récupération douce
+                // (relecture de la version serveur) avant de sauter le PUT.
+                // Sans cela, une seule collision bloquait la sync à vie.
+                if (_conflictedProjects.has(project.id)) {
+                    const recovered = await _recoverProjectConflict(project.id);
+                    if (!recovered) continue;
+                }
                 const fp = _projectFingerprint(project);
                 const already = pushedMap[project.id];
                 if (serverIds.has(project.id) && already && already.fp === fp) continue;
@@ -1822,8 +2102,36 @@
                     }
 
                     if (isProjectVersionFailure(response)) {
-                        await recordProjectConflict(response, project.id);
-                        continue;
+                        // Plutôt que bloquer la sync à vie, on récupère
+                        // immédiatement : le PUT est rejoué avec la version
+                        // serveur fraîche, dans le même cycle.
+                        const recovered = await _recoverProjectConflict(project.id);
+                        if (recovered && !_conflictedProjects.has(project.id)) {
+                            try {
+                                const retryRes = await fetchWithRetry(
+                                    `${API_BASE_URL}/projects/${encodeURIComponent(project.id)}`,
+                                    withProjectVersion(project.id, {
+                                        method: 'PUT',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(project.data || {})
+                                    }), RETRY_CONFIG.maxAttempts);
+                                if (retryRes.ok) {
+                                    response = retryRes;
+                                } else if (isProjectVersionFailure(retryRes)) {
+                                    await recordProjectConflict(retryRes, project.id);
+                                    continue;
+                                } else if (!retryRes.ok) {
+                                    console.warn('[Proxy] Push projet échoué (rejeu):', project.id, retryRes.status);
+                                    continue;
+                                }
+                            } catch (e) {
+                                console.warn('[Proxy] Rejeu push échoué:', project.id, e && e.message);
+                                continue;
+                            }
+                        } else {
+                            await recordProjectConflict(response, project.id);
+                            continue;
+                        }
                     }
                     if (!response.ok) {
                         console.warn('[Proxy] Push projet échoué:', project.id, response.status);

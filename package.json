@@ -15,7 +15,7 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "node --test tests/engineering-core.test.js tests/transformer-rectifier.test.js tests/anodes-mixte-reinforcement.test.js tests/anodes-all-equipment.test.js tests/field-sync.test.js tests/storage-proxy-delete.test.js tests/dashboard-sync.test.js",
+    "test": "node --test tests/engineering-core.test.js tests/transformer-rectifier.test.js tests/anodes-mixte-reinforcement.test.js tests/anodes-all-equipment.test.js tests/field-sync.test.js tests/storage-proxy-delete.test.js tests/studio-auth-sync.test.js tests/dashboard-sync.test.js",
     "test:engineering": "node --test tests/engineering-core.test.js",
     "test:optimization": "node --test tests/anodes-mixte-reinforcement.test.js tests/anodes-all-equipment.test.js",
     "test:watch": "vitest",
