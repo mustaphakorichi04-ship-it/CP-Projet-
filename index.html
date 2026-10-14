@@ -60,7 +60,7 @@
      ============================================================ -->
 <script src="vendor/xlsx/0.18.5/xlsx.full.min.js"
         integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"
-        crossorigin="anonymous"></script>
+        crossorigin="anonymous" defer></script>
    <script src="vendor/chart.js/4.4.0/chart.umd.min.js"
         integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
         crossorigin="anonymous" defer></script>
@@ -2933,7 +2933,7 @@
     <!-- Modules socles (ordre strict) -->
     <script src="engine.js?v=20261009-3" defer></script>
     <script src="storage.js?v=20261011-2" defer></script>
-    <script src="storage-proxy.js?v=20261011-3" defer></script>
+    <script src="storage-proxy.js?v=20261013-1" defer></script>
     <script src="geoUtils.js" defer></script>
     <script src="coordUtils.js" defer></script>
     <script src="gpsConverter.js" defer></script>
@@ -2971,7 +2971,10 @@
     <script src="pdf-report-sections.js?v=20260916-2" defer></script>
     <script src="pdf-report-engine.js?v=20260916-2" defer></script>
     <script src="pdfReport.js?v=20260916-2" defer></script>
-    <script src="pdfReport.test.js" defer></script>
+    <!-- pdfReport.test.js retiré du bundle de production (audit PERF) :
+         les tests unitaires sont exécutés via `npm test` (node --test), pas
+         dans le navigateur. Supprimer ce chargement évite le téléchargement
+         et le parsing inutiles au démarrage. Aucun impact fonctionnel. -->
 
     <!-- Modules GIS & 3D complémentaires -->
     <script src="gisSync.js" defer></script>
@@ -3022,8 +3025,5 @@
             window.addEventListener('popstate', checkHash);
         });
     </script>
-</body>
-</html>
-
 </body>
 </html>

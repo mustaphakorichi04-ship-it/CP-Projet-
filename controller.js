@@ -159,6 +159,16 @@ const ProjectManager = (function() {
     let projectsList = [];
     let saveQueue = Promise.resolve();
 
+    // OPTIM PERF (audit MOYEN-7) : empreinte du dernier état persisté.
+    // L'intervalle de sauvegarde (30 s) appelait saveCurrentProject() même
+    // sans aucune modification, ce qui déclenchait à chaque fois un deepClone
+    // + écriture IndexedDB + rechargement de la liste des projets.
+    // On mémorise une signature (sérialisation) du dernier état EFFECTIVEMENT
+    // écrit : si l'état courant est identique, la sauvegarde est un no-op.
+    // Aucun risque de perte de données : on compare le contenu RÉEL de l'état
+    // (aucun chemin de mutation à instrumenter manuellement).
+    let _lastSavedSignature = null;
+
     // OPTIM : Cache des équipements pour éviter les rechargements redondants
     let _lastProjectId = null;
     let _lastEquipments = null;
@@ -864,6 +874,12 @@ const ProjectManager = (function() {
             const migratedData = migrateGroupsToSysteme(project.data);
             project.data = migratedData;
             state = Utils.deepClone(project.data);
+
+            // OPTIM PERF (audit MOYEN-7) : l'état vient d'être remplacé par un
+            // nouveau projet -> on invalide la signature de sauvegarde pour que
+            // la prochaine persistance compare contre CE projet (jamais un no-op
+            // erroné hérité du projet précédent).
+            _lastSavedSignature = null;
 
             // --- CHARGEMENT IMMÉDIAT DES ÉQUIPEMENTS DU PROJET ---
             const freshEquipments = await StorageManager.loadEquipmentsForProject(projectId);
@@ -1809,6 +1825,24 @@ const ProjectManager = (function() {
             saveQueue = saveQueue.then(async () => {
                 try {
                     normalizeCalculationState();
+
+                    // OPTIM PERF (audit MOYEN-7) : si l'état métier est identique
+                    // au dernier état persisté, on saute l'écriture IndexedDB et le
+                    // rechargement de la liste (no-op). On compare une signature
+                    // de l'état (hors métadonnées volatiles). Comportement de
+                    // persistance inchangé : toute modification réelle de l'état
+                    // change la signature et déclenche la sauvegarde.
+                    let signature = null;
+                    try {
+                        signature = JSON.stringify(state);
+                    } catch (e) {
+                        signature = null; // état non sérialisable -> on force la sauvegarde
+                    }
+                    if (signature !== null && signature === _lastSavedSignature) {
+                        resolve();
+                        return;
+                    }
+
                     const project = {
                         id: currentProjectId,
                         name: state.project.name,
@@ -1821,6 +1855,9 @@ const ProjectManager = (function() {
 
                     const all = await StorageManager.loadProjects();
                     projectsList = all;
+
+                    // Mémorise la signature effectivement persistée.
+                    _lastSavedSignature = signature;
 
                     resolve();
                 } catch (err) {

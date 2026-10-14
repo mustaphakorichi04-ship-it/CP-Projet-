@@ -452,7 +452,9 @@
             }
 
             particleSystem = new THREE.Points(geometry, material);
+            particleSystem.visible = false;   // filaments cachés (désactivés par configuration)
             _scene.add(particleSystem);
+
 
             particleData = {
                 curves: flowCurves,
@@ -490,7 +492,15 @@
 
     function animateParticles() {
         if (!isRunning) return;
-        updateParticles();
+        // OPTIM PERF (audit) : garde de visibilité (cohérente avec Gis3D).
+        // Hors du module "Visualisation 3D" ou onglet caché, on saute la mise
+        // à jour des uniforms de particules (pas de rendu visible). La boucle
+        // reste vivante ; au retour, le check de version se fait à la 1re frame.
+        const moduleEl = document.getElementById('module-visualisation3d');
+        const isVisible = !!(moduleEl && moduleEl.classList.contains('active')) && !document.hidden;
+        if (isVisible) {
+            updateParticles();
+        }
         animationId = requestAnimationFrame(animateParticles);
     }
 

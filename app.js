@@ -1582,6 +1582,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     };
                     _uiMethods.forEach(m => { _uiFallback[m] = function() {}; });
                     window.UI = _uiFallback;
+                    // ⭐ E : filet de sécurité — exposer aussi les alias globaux que
+                    // ui.js définit normalement (app.js les appelle sans préfixe).
+                    // Évite une ReferenceError totale si ui.js ne s'est pas exécuté.
+                    const _fallbackGlobals = _uiMethods.concat([
+                        'populateTestPostsSelectors', 'ensureAnodeDefaults',
+                        'refreshEquipmentProjectDropdown', 'refreshEquipmentListInCP',
+                        'populateCPEquipmentSelector'
+                    ]);
+                    _fallbackGlobals.forEach(function(name) {
+                        if (typeof window[name] === 'undefined') {
+                            window[name] = function() {};
+                        }
+                    });
                     Logger.info('[App] UI fallback créé (' + _uiMethods.length + ' méthodes)');
                     uiReady = true;
                 }
@@ -1846,16 +1859,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ============================================================
         setTimeout(autoRestoreOnLoad, 1500);
 
-        const saveBtn = document.getElementById('saveNowBtn');
-        if (saveBtn) saveBtn.addEventListener('click', function() { SaveSystem.fullSave(true); });
-
-        const fullSaveBtn = document.getElementById('forceSaveAllBtn');
-        if (fullSaveBtn) fullSaveBtn.addEventListener('click', function() { SaveSystem.fullSave(true); });
-
         document.addEventListener('keydown', function(e) {
             if ((e.ctrlKey || e.metaKey) && e.key === 's' && !e.shiftKey) {
                 e.preventDefault();
-                SaveSystem.fullSave(true);
+                document.getElementById('saveAllBtn')?.click();
             }
         });
 
@@ -1974,26 +1981,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     this.innerHTML = '<i class="fas fa-sign-in-alt"></i> Connexion';
                     this.title = 'Se connecter au serveur';
                 } else {
-                    const authenticated = await showLoginModal();
-                    if (authenticated) {
-                        this.innerHTML = '<i class="fas fa-sign-out-alt"></i> Déconnexion';
-                        this.title = 'Se déconnecter du serveur';
-                        if (window.UI && typeof window.UI.showToast === 'function') {
-                            window.UI.showToast('✅ Connecté au serveur.', 'success');
-                        }
-                        const projectId = ProjectManager.getCurrentProjectId();
-                        if (projectId) {
-                            await ProjectManager.loadProject(projectId);
-                            UI.populateProjectSelector();
-                            UI.refreshEquipmentListUI(true);
-                            if (window.CPController) {
-                                window.CPController.updateDashboard();
-                                window.CPController.syncSurfaceFromEquipments();
-                                window.CPController.syncAllEquipmentToGIS();
-                                window.CPController.syncAllEquipmentTo3D();
-                            }
-                        }
-                    }
+                    window.location.assign('/login');
                 }
             });
         }
@@ -2045,47 +2033,63 @@ document.addEventListener('DOMContentLoaded', async () => {
         setTimeout(bootstrapProjectSelector, 100);
 
         // ─── P1-04 : Listener storage avec guard anti-récursion ───
+        // OPTIM PERF (audit MOYEN-8) : en multi-onglets, une session de
+        // sauvegarde émet souvent plusieurs événements 'storage' en rafale
+        // (projets + équipements + systèmes…). On regroupe ces événements via
+        // un court debounce (300 ms) pour ne déclencher QU'UN SEUL rechargement
+        // complet au lieu de N. Le contenu rechargé est STRICTEMENT identique
+        // (aucune désynchronisation) ; seules les redondances sont éliminées.
+        // Le guard anti-récursion interne (SaveSystem.isInternalSave) et la
+        // fenêtre de 2 s sont conservés à l'identique.
         let _storageReloadGuard = false;
         let _storageReloadTimeout = null;
+        let _storageDebounceTimer = null;
+
+        function runStorageReload() {
+            if (_storageReloadGuard) {
+                Logger.debug('[App] storage ignoré (rechargement déjà en cours)');
+                return;
+            }
+            if (SaveSystem.isInternalSave()) {
+                Logger.debug('[App] storage ignoré (sauvegarde interne)');
+                return;
+            }
+            _storageReloadGuard = true;
+            if (_storageReloadTimeout) clearTimeout(_storageReloadTimeout);
+            _storageReloadTimeout = setTimeout(() => {
+                _storageReloadGuard = false;
+            }, 2000);
+
+            ProjectManager.loadProjectsList()
+                .then(() => {
+                    refreshEquipmentProjectDropdown();
+                    refreshEquipmentListInCP();
+                    populateCPEquipmentSelector();
+                    populateGroundbedProjectSelect();
+                    populateInterferenceProjectSelect();
+                    populatePipelineSelects();
+                    loadHistory();
+                    refreshEquipmentListUI();
+                    refreshFieldMeasurementsTable();
+                    renderSystems();
+                    populateAllSystemSelectors();
+                    populateTestPostsSelectors();
+                    populateVis3dSystemSelector();
+                    _storageReloadGuard = false;
+                    if (_storageReloadTimeout) {
+                        clearTimeout(_storageReloadTimeout);
+                        _storageReloadTimeout = null;
+                    }
+                })
+                .catch(err => console.warn('Erreur lors du rechargement après storage:', err));
+        }
+
         window.addEventListener('storage', function(e) {
             const key = e.key;
             if (key && key.startsWith('cp_')) {
-                if (_storageReloadGuard) {
-                    Logger.debug('[App] storage ignoré (rechargement déjà en cours)');
-                    return;
-                }
-                if (SaveSystem.isInternalSave()) {
-                    Logger.debug('[App] storage ignoré (sauvegarde interne)');
-                    return;
-                }
-                _storageReloadGuard = true;
-                if (_storageReloadTimeout) clearTimeout(_storageReloadTimeout);
-                _storageReloadTimeout = setTimeout(() => {
-                    _storageReloadGuard = false;
-                }, 2000);
-
-                ProjectManager.loadProjectsList()
-                    .then(() => {
-                        refreshEquipmentProjectDropdown();
-                        refreshEquipmentListInCP();
-                        populateCPEquipmentSelector();
-                        populateGroundbedProjectSelect();
-                        populateInterferenceProjectSelect();
-                        populatePipelineSelects();
-                        loadHistory();
-                        refreshEquipmentListUI();
-                        refreshFieldMeasurementsTable();
-                        renderSystems();
-                        populateAllSystemSelectors();
-                        populateTestPostsSelectors();
-                        populateVis3dSystemSelector();
-                        _storageReloadGuard = false;
-                        if (_storageReloadTimeout) {
-                            clearTimeout(_storageReloadTimeout);
-                            _storageReloadTimeout = null;
-                        }
-                    })
-                    .catch(err => console.warn('Erreur lors du rechargement après storage:', err));
+                // Debounce : groupe les événements storage en rafale.
+                if (_storageDebounceTimer) clearTimeout(_storageDebounceTimer);
+                _storageDebounceTimer = setTimeout(runStorageReload, 300);
             }
         });
 
@@ -2221,14 +2225,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ============================================================
         // ZONES CRITIQUES + CARTOGRAPHIE
         // ============================================================
+        // OPTIM PERF (audit MAJEUR-5) : l'ancien MutationObserver observait
+        // #mainContent avec { childList: true, subtree: true } → son callback
+        // s'exécutait à CHAQUE mutation DOM de toute l'application (rendus de
+        // tables, listes d'équipements, popups…), pour un coût CPU continu.
+        // La navigation passe exclusivement par UI.switchModule() qui émet
+        // l'événement 'moduleChanged' (déjà consommé par gisIntegration.js).
+        // On remplace donc l'observer global par un écouteur 'moduleChanged'
+        // ciblé : comportement identique (init carte à l'entrée du module),
+        // coût DOM supprimé. Aucun impact sur les données, la carte ou le GPS.
         const mapContainer = document.getElementById('mapContainer');
         if (mapContainer) {
-            const observer = new MutationObserver(() => {
+            const ensureCartographyInit = () => {
                 const module = document.getElementById('module-cartography');
                 if (module && module.classList.contains('active')) {
                     if (!window.GisIntegration || !window.GisIntegration.getMap()) {
                         setTimeout(() => {
-                            console.log('[UI] MutationObserver: Activation de la cartographie, initialisation de la carte...');
+                            console.log('[UI] moduleChanged: Activation de la cartographie, initialisation de la carte...');
                             if (window.GisIntegration && typeof window.GisIntegration.init === 'function') {
                                 window.GisIntegration.init();
                                 setTimeout(() => {
@@ -2238,8 +2251,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         }, 300);
                     }
                 }
-            });
-            observer.observe(document.getElementById('mainContent'), { childList: true, subtree: true });
+            };
+
+            document.addEventListener('moduleChanged', ensureCartographyInit);
 
             if (document.getElementById('module-cartography')?.classList.contains('active')) {
                 setTimeout(() => {
@@ -2257,8 +2271,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ============================================================
         // FORMULAIRE GROUNDBED + BOUTONS ICCP
         // ============================================================
+        // ⚠️ CORRECTION (doublon de puits anodique) :
+        // le listener 'submit' de #groundbedForm est désormais déclaré
+        // UNIQUEMENT dans UI.setupGroundbedForm() (ui.js). Il était
+        // dupliqué ici → 2× calculateGroundbed() → 2 puits créés par clic.
         const gbForm = document.getElementById('groundbedForm');
-        if (gbForm) {
+        if (gbForm && !gbForm.dataset.gbSubmitBound) {
+            // Filet de sécurité : si UI.setupGroundbedForm() n'a pas encore tourné.
+            gbForm.dataset.gbSubmitBound = '1';
             gbForm.addEventListener('submit', function(e) {
                 e.preventDefault();
                 const editId = document.getElementById('gbEditId').value;
